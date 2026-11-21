@@ -2,7 +2,12 @@
 
 The app only READS small precomputed files from app_data/ (made by run_pipeline.py).
 It never trains a model while you click around, so every page is fast.
+
+Design: one validated colour pair (blue = normal, orange = flagged), insight titles
+instead of generic chart titles, a table view behind every chart, and a Back / Next
+footer so the pages can be presented in story order.
 """
+import itertools
 from pathlib import Path
 
 import pandas as pd
@@ -10,19 +15,48 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-APP_DATA = Path(__file__).parent / "app_data"
-NORMAL, ANOMALY, GREY = "#1f6f8b", "#e8710a", "#9aa7b0"
-CHART_H = 380
-DISCLAIMER = ("An anomaly flag only means **\"this reading differs from the learned normal pattern\"**. "
-              "It is **not proof** of electricity theft, equipment failure or any other specific cause. "
+ROOT = Path(__file__).parent
+APP_DATA = ROOT / "app_data"
+
+# ---- design tokens (validated with the dataviz palette validator, both themes) ----
+IS_DARK = getattr(st.context.theme, "type", None) == "dark"      # follows the Streamlit theme menu (top right)
+LIGHT = dict(page="#f9f9f7", surface="#fcfcfb", ink="#0b0b0b", ink2="#52514e", muted="#898781", hair="rgba(11,11,11,0.10)",
+             grid="#e1e0d9", baseline="#c3c2b7", hover="#f1f0ec", blue="#2a78d6", orange="#eb6834", blue_dark="#1c5cab",
+             blue_wash="#eaf2fc", orange_wash="#fdeee7", hot_text="#b8431a",
+             clusters=["#2a78d6", "#e87ba4", "#008300"],            # blue, magenta, green (orange is reserved for flags)
+             seq=[[0, "#cde2fb"], [0.35, "#86b6ef"], [0.65, "#3987e5"], [0.85, "#1c5cab"], [1, "#0d366b"]])
+DARK = dict(page="#0d0d0d", surface="#1a1a19", ink="#f0efec", ink2="#c3c2b7", muted="#898781", hair="rgba(255,255,255,0.10)",
+            grid="#2c2c2a", baseline="#383835", hover="#262624", blue="#3987e5", orange="#d95926", blue_dark="#86b6ef",
+            blue_wash="rgba(57,135,229,0.16)", orange_wash="rgba(217,89,38,0.18)", hot_text="#f2a283",
+            clusters=["#3987e5", "#d55181", "#0ca30c"],
+            seq=[[0, "#0d2a4f"], [0.5, "#1c5cab"], [1, "#3987e5"]])      # low values recede into the dark surface; white text stays readable
+TH = DARK if IS_DARK else LIGHT
+NORMAL, ANOMALY = TH["blue"], TH["orange"]
+INK, INK2, MUTED = TH["ink"], TH["ink2"], TH["muted"]
+GRID, BASELINE, SURFACE = TH["grid"], TH["baseline"], TH["surface"]
+CLUSTER_COLORS, SEQUENTIAL = TH["clusters"], TH["seq"]
+CLUSTER_SYMBOLS = ["circle", "diamond", "square"]
+FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+PLOT_CONFIG = {"displayModeBar": False}
+
+DISCLAIMER = ("An anomaly flag only means <b>“this reading differs from the learned normal pattern”</b>. "
+              "It is <b>not proof</b> of electricity theft, equipment failure or any other specific cause. "
               "That would need extra evidence and a proper investigation.")
 METHODS = {"Isolation Forest (main method)": "flag_if", "Local Outlier Factor": "flag_lof",
            "Z-score (per home & hour)": "flag_z", "IQR (per home & hour)": "flag_iqr",
            "Consensus (2 or more methods agree)": "consensus2"}
 SCORES = {"flag_if": "if_score", "flag_lof": "lof_score"}
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+SHORT = {"Isolation Forest": "Isolation Forest", "Local Outlier Factor": "LOF", "Z-score (per home & hour)": "Z-score",
+         "IQR (per home & hour)": "IQR", "Global z-score (naive)": "Global z-score", "Consensus (2+ methods)": "2+ agree"}
 
 st.set_page_config(page_title="Pakistan Electricity Anomaly Mining", page_icon="⚡", layout="wide")
+_vars = {"page": TH["page"], "surface": TH["surface"], "ink": TH["ink"], "ink2": TH["ink2"], "muted": TH["muted"], "hair": TH["hair"],
+         "hover": TH["hover"], "blue": TH["blue"], "blue-dark": TH["blue_dark"], "blue-wash": TH["blue_wash"], "orange": TH["orange"],
+         "orange-wash": TH["orange_wash"], "hot-text": TH["hot_text"], "grid": TH["grid"]}
+_theme_css = ":root{" + "".join(f"--{k}:{v};" for k, v in _vars.items()) + "}"
+st.markdown(f"<style>{(ROOT / 'assets' / 'style.css').read_text(encoding='utf-8')}{_theme_css}</style>", unsafe_allow_html=True)
+_card_ids = itertools.count()          # restarts every run, so card keys stay stable
 
 
 # ---------------------------------------------------------------- data loading (cached)
@@ -45,164 +79,330 @@ def load_parquet(name):
     return pd.read_parquet(APP_DATA / name)
 
 
-def house_label(hid, city):
-    return f"House {hid} ({city})"
+# ---------------------------------------------------------------- building blocks
+def header(step, title, sub):
+    st.markdown(f'<div class="eyebrow">{step}</div><h1 class="page-title">{title}</h1><p class="page-sub">{sub}</p>',
+                unsafe_allow_html=True)
 
 
-def house_picker(key, default=None):
-    """Sidebar-free household dropdown. Returns the household id."""
-    s = load_csv("household_summary.csv")
-    labels = {house_label(r.household_id, r.city): int(r.household_id) for r in s.itertuples()}
-    names = list(labels)
-    idx = 0 if default is None else names.index(house_label(default, s.loc[s.household_id == default, "city"].iloc[0]))
-    return labels[st.selectbox("Household", names, index=idx, key=key)]
+def card():
+    return st.container(key=f"card_{next(_card_ids)}")
 
 
-def how_to_read(text):
-    st.caption(f"**How to read this chart:** {text}")
+def insight(title, sub=""):
+    st.markdown(f'<div class="insight">{title}</div><div class="insight-sub">{sub}</div>', unsafe_allow_html=True)
 
 
-def style(fig, ytitle=None, xtitle=None, height=CHART_H):
-    fig.update_layout(height=height, margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", y=1.12),
-                      yaxis_title=ytitle, xaxis_title=xtitle, template="plotly_white")
+def kpi(col, label, value, sub="", hot=False):
+    col.markdown(f'<div class="kpi{" hot" if hot else ""}"><div class="label">{label}</div>'
+                 f'<div class="value">{value}</div><div class="sub">{sub}</div></div>', unsafe_allow_html=True)
+
+
+def callout(html, warn=False):
+    st.markdown(f'<div class="callout{" warn" if warn else ""}">{html}</div>', unsafe_allow_html=True)
+
+
+def gap(px_height=12):
+    """Small vertical spacer, halved for the compact layout."""
+    st.markdown(f"<div style='height:{max(2, px_height // 2)}px'></div>", unsafe_allow_html=True)
+
+
+def style(fig, ytitle=None, xtitle=None, height=360, hover="x"):
+    """One chart look everywhere: hairline solid grid, recessive axes, 2px lines, legend top-left."""
+    fig.update_layout(
+        height=height, margin=dict(l=4, r=8, t=28, b=8), template="plotly_dark" if IS_DARK else "plotly_white", font=dict(family=FONT, size=13, color=INK2),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode=hover, hoverdistance=30,
+        hoverlabel=dict(bgcolor=SURFACE, bordercolor=GRID, font=dict(family=FONT, size=13, color=INK)),
+        legend=dict(orientation="h", x=0, y=1.14, xanchor="left", font=dict(size=13)),
+        xaxis=dict(title=xtitle, showgrid=False, linecolor=BASELINE, ticks="outside", tickcolor=BASELINE, title_font=dict(size=13)),
+        yaxis=dict(title=ytitle, gridcolor=GRID, gridwidth=1, zeroline=False, title_font=dict(size=13)))
     return fig
+
+
+def chart_card(title, sub, fig, how=None, table=None):
+    """A chart in a card: insight title, the chart, an optional how-to-read line and a table view."""
+    with card():
+        insight(title, sub)
+        st.plotly_chart(fig, width="stretch", config=PLOT_CONFIG)
+        if how:
+            st.markdown(f'<div class="how"><b>How to read:</b> {how}</div>', unsafe_allow_html=True)
+        if table is not None:
+            with st.expander("Table view"):
+                st.dataframe(table, width="stretch", hide_index=True)
+
+
+def rnd(df, n=2):
+    """Round only the numeric columns (DataFrame.round warns when a table also has dates)."""
+    return df.assign(**{c: df[c].round(n) for c in df.select_dtypes("number").columns})
 
 
 def empty_msg(msg="No data for this selection. Try another household or a wider date range."):
     st.info(msg)
 
 
+def house_picker(key, label="Household"):
+    s = load_csv("household_summary.csv")
+    labels = {f"House {r.household_id} ({r.city})": int(r.household_id) for r in s.itertuples()}
+    return labels[st.selectbox(label, list(labels), key=key)]
+
+
+def go_to(page):
+    st.session_state["nav"] = page
+
+
+def footer_nav(current):
+    names = list(PAGES)
+    i = names.index(current)
+    gap(18)
+    left, right = st.columns(2)
+    if i > 0:
+        left.button(f"← {names[i - 1]}", on_click=go_to, args=(names[i - 1],), key=f"back_{i}")
+    if i < len(names) - 1:
+        right.button(f"Next: {names[i + 1]} →", on_click=go_to, args=(names[i + 1],), type="primary", key=f"next_{i}")
+
+
+def ts(t, fmt="%d %b %Y, %H:%M"):
+    return pd.Timestamp(t).strftime(fmt)
+
+
 # ---------------------------------------------------------------- pages
 def page_home():
     df = load_hourly()
-    st.title("⚡ Pakistan Electricity Consumption Anomaly Mining")
-    st.markdown("**Team:** Izaan Imran · Fahad Ahmed · Shiraz Asif · Dayyan Hashmi  |  **Data Mining project, 2026**")
-    st.markdown(
-        "Homes use electricity in different ways, and a single reading can look high or low for many normal reasons "
-        "(hot weather, a guest, an appliance). We learn what is **normal for each home** and flag the hours that differ "
-        "from it, using real one-minute smart-meter data from 59 Pakistani households.")
-    c = st.columns(5)
-    c[0].metric("Households", df.household_id.nunique())
-    c[1].metric("Cities", df.city.nunique())
-    c[2].metric("Hours analysed", f"{len(df):,}")
-    c[3].metric("Flagged by Isolation Forest", f"{int(df.flag_if.sum()):,}")
-    c[4].metric("Flagged by 2+ methods", f"{int(df.consensus2.sum()):,}")
     comp = load_csv("method_comparison.csv").set_index("method")
+    wc = load_csv("weather_check.csv")
+    header("Data Mining project · 2026", "Finding unusual electricity use in Pakistani homes",
+           "We learn what is <b>normal for each of 59 households</b>, allow for the weather, and flag the hours that do not fit. "
+           "Built on real one-minute smart-meter data from six cities.")
+    st.markdown("".join(f'<span class="chip">{n}</span>' for n in ["Izaan Imran", "Fahad Ahmed", "Shiraz Asif", "Dayyan Hashmi"]),
+                unsafe_allow_html=True)
+    c = st.columns(4)
+    kpi(c[0], "Hours analysed", f"{len(df):,}", f"{ts(df.timestamp.min(), '%b %Y')} to {ts(df.timestamp.max(), '%b %Y')}")
+    kpi(c[1], "Flagged by 2+ methods", f"{int(df.consensus2.sum()):,}", "high-confidence unusual hours", hot=True)
+    kpi(c[2], "Flagged by Isolation Forest", f"{int(df.flag_if.sum()):,}", "1% of hours by design")
+    kpi(c[3], "Households", f"{df.household_id.nunique()}", f"across {df.city.nunique()} cities in Pakistan")
+    gap(14)
+
+    left, right = st.columns([3, 2])
+    with left:
+        cases = load_csv("cases.csv")
+        ctx = load_parquet("case_context.parquet")
+        case = cases.iloc[0]
+        w = ctx[ctx.case_id == case.case_id].sort_values("timestamp")
+        a = w[w.consensus > 0]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=w.timestamp, y=w.kwh, mode="lines", line=dict(color=NORMAL, width=2), name="Energy used",
+                                 hovertemplate="%{y:.2f} kWh<extra></extra>"))
+        fig.add_trace(go.Scatter(x=w.timestamp, y=w.base_med, mode="lines", line=dict(color=MUTED, width=1.5), name="Normal for this hour",
+                                 hovertemplate="%{y:.2f} kWh<extra></extra>"))
+        fig.add_trace(go.Scatter(x=a.timestamp, y=a.kwh, mode="markers", name="Flagged",
+                                 marker=dict(color=ANOMALY, size=9, line=dict(color=SURFACE, width=2)),
+                                 hovertemplate="%{y:.2f} kWh (flagged)<extra></extra>"))
+        chart_card(f"A real example: House {case.household_id} ({case.city})",
+                   f"Around {ts(case.timestamp, '%d %b %Y')} the home used far more than its normal for that hour. Orange marks the flagged hours.",
+                   style(fig, "Energy (kWh per hour)", height=330),
+                   how="the blue line is real use, the grey line is what is normal for that hour of day. Orange dots are hours our methods flagged.")
+    with right:
+        with card():
+            insight("How it works", "Four ideas, in plain words")
+            st.markdown(
+                '<div class="step"><div class="num">1</div><div class="txt"><b>Learn normal, per home</b>Typical use for every hour, weekday or weekend, for each household.</div></div>'
+                '<div class="step"><div class="num">2</div><div class="txt"><b>Allow for the weather</b>Hot hours raise cooling use, so a high reading in a heatwave is not automatically unusual.</div></div>'
+                '<div class="step"><div class="num">3</div><div class="txt"><b>Flag what does not fit</b>Isolation Forest, LOF, Z-score and IQR each vote. Agreement means higher confidence.</div></div>'
+                '<div class="step"><div class="num">4</div><div class="txt"><b>Explain every flag</b>Each flagged hour gets a plain-language reason.</div></div>',
+                unsafe_allow_html=True)
+        with card():
+            insight("Where to look", "A suggested path for the demo")
+            st.markdown(
+                '<div class="where"><b>Anomaly Detector</b> pick any home, see its flagged hours and the reason for each.</div>'
+                '<div class="where"><b>Weather Impact</b> see which high readings are explained by heat.</div>'
+                '<div class="where"><b>Method Comparison</b> see which method to trust, and for what.</div>',
+                unsafe_allow_html=True)
+    gap(14)
+
+    t_hot = wc[wc.measure.str.contains("time-only")].iloc[0]
+    w_hot = wc[wc.measure.str.contains("weather-aware")].iloc[0]
+    cons = comp.loc["Consensus (2+ methods)"]
     best = comp["auc"].idxmax()
-    st.success(f"**Best method in our controlled test:** {best} (AUC {comp.loc[best, 'auc']:.2f}). "
-               "No single method wins everywhere, so the Method Comparison page explains which to use for what.")
-    st.markdown("#### How to use this app")
-    st.markdown("Pick a page on the left. Start with **Anomaly Detector** to see flagged hours for any home, "
-                "then **Weather Impact** to see which flags are explained by temperature.")
-    st.warning(DISCLAIMER)
+    f = st.columns(3)
+    for col, big, label in [
+        (f[0], f"{t_hot.ratio_hot_vs_other:.1f}× → {w_hot.ratio_hot_vs_other:.1f}×", "How much more often the hottest 10% of hours look “high”, before and after allowing for temperature."),
+        (f[1], f"{cons.precision:.2f}", "Precision when two or more methods agree (injection test). Use these as high-confidence alerts."),
+        (f[2], f"{comp.loc[best, 'auc']:.2f}", f"Best overall ranking quality (AUC): {SHORT.get(best, best)}. No single method wins every anomaly type.")]:
+        with col:
+            with card():
+                st.markdown(f'<div class="pill">Key finding</div><div class="fig">{big}</div><div class="fig-label">{label}</div>', unsafe_allow_html=True)
+    gap(6)
+    callout(DISCLAIMER, warn=True)
+    st.button("Open the Anomaly Detector →", on_click=go_to, args=("Anomaly Detector",), type="primary", key="cta_home")
+    footer_nav("Home")
 
 
 def page_explorer():
-    st.header("Data Explorer")
+    header("Step 1 of 7 · Explore", "Data Explorer",
+           "When do homes use electricity, how does it change across the year, and how does it relate to the weather?")
     df = load_hourly()
-    c1, c2, c3 = st.columns([1, 1, 2])
-    city = c1.selectbox("City", ["All cities"] + sorted(df.city.unique()))
-    d = df if city == "All cities" else df[df.city == city]
-    ids = sorted(d.household_id.unique())
-    hid = c2.selectbox("Household", ["All in selection"] + [int(i) for i in ids])
-    if hid != "All in selection":
-        d = d[d.household_id == hid]
-    lo, hi = d.timestamp.min().date(), d.timestamp.max().date()
-    rng = c3.date_input("Date range", (lo, hi), min_value=lo, max_value=hi)
+    with card():
+        c1, c2, c3 = st.columns([1, 1, 2])
+        city = c1.selectbox("City", ["All cities"] + sorted(df.city.unique()))
+        d = df if city == "All cities" else df[df.city == city]
+        ids = sorted(d.household_id.unique())
+        hid = c2.selectbox("Household", ["All in selection"] + [int(i) for i in ids])
+        if hid != "All in selection":
+            d = d[d.household_id == hid]
+        lo, hi = d.timestamp.min().date(), d.timestamp.max().date()
+        rng = c3.date_input("Date range", (lo, hi), min_value=lo, max_value=hi)
     if len(rng) != 2:
         empty_msg("Pick both a start and an end date."); return
     d = d[(d.timestamp.dt.date >= rng[0]) & (d.timestamp.dt.date <= rng[1])]
     if d.empty:
         empty_msg(); return
+    gap(10)
     t1, t2, t3, t4 = st.tabs(["Daily pattern", "Over time", "Seasons", "Weather link"])
     with t1:
         prof = d.groupby(["hour", "is_weekend"])["kwh"].mean().reset_index()
         prof["Day type"] = prof["is_weekend"].map({0: "Weekday", 1: "Weekend"})
-        fig = px.line(prof, x="hour", y="kwh", color="Day type", color_discrete_sequence=[NORMAL, GREY], markers=True)
-        st.plotly_chart(style(fig, "Average energy (kWh per hour)", "Hour of day"), width="stretch")
-        how_to_read("each point is the average energy used in that hour of the day. Higher points are the busy hours (peaks).")
+        allh = d.groupby("hour")["kwh"].mean()
+        fig = px.line(prof, x="hour", y="kwh", color="Day type", color_discrete_map={"Weekday": NORMAL, "Weekend": MUTED})
+        fig.update_traces(line=dict(width=2), hovertemplate="%{y:.2f} kWh")
+        chart_card(f"Use peaks around {allh.idxmax():02d}:00 and is lowest around {allh.idxmin():02d}:00",
+                   "Average energy per hour of the day for the selection.",
+                   style(fig, "Average energy (kWh per hour)", "Hour of day", 380),
+                   how="each point is the average energy used in that hour. Higher points are the busy hours (peaks).",
+                   table=prof[["hour", "Day type", "kwh"]].pipe(rnd, 3).rename(columns={"kwh": "Average kWh"}))
     with t2:
         day = d.assign(date=d.timestamp.dt.floor("D")).groupby("date")["kwh"].mean().reset_index()
         fig = px.line(day, x="date", y="kwh", color_discrete_sequence=[NORMAL])
-        st.plotly_chart(style(fig, "Average energy (kWh per hour)", "Date"), width="stretch")
-        how_to_read("one point per day (average hourly use that day). Bumps in summer usually mean cooling.")
+        fig.update_traces(line=dict(width=2), hovertemplate="%{y:.2f} kWh")
+        chart_card("How daily use changes over time",
+                   f"One point per day. Daily average ranges from {day.kwh.min():.2f} to {day.kwh.max():.2f} kWh per hour.",
+                   style(fig, "Average energy (kWh per hour)", None, 380),
+                   how="bumps in summer usually mean cooling.", table=day.pipe(rnd, 3).rename(columns={"kwh": "Average kWh"}))
     with t3:
-        mon = d.groupby("month")["kwh"].mean().reindex(range(1, 13)).reset_index()
-        mon["Month"] = MONTHS
-        fig = px.bar(mon, x="Month", y="kwh", color_discrete_sequence=[NORMAL])
-        st.plotly_chart(style(fig, "Average energy (kWh per hour)"), width="stretch")
-        how_to_read("average use per calendar month. Months with no bar have no data for this selection.")
+        mon = d.groupby("month")["kwh"].mean().reindex(range(1, 13))
+        busy, quiet = int(mon.idxmax()), int(mon.idxmin())
+        mdf = pd.DataFrame({"Month": MONTHS, "kwh": mon.values})
+        fig = go.Figure(go.Bar(x=mdf.Month, y=mdf.kwh, marker=dict(color=NORMAL, cornerradius=4), width=0.55,
+                               hovertemplate="%{x}: %{y:.2f} kWh<extra></extra>"))
+        chart_card(f"{MONTHS[busy - 1]} is the busiest month, {mon.max() / mon.min():.1f}× the quietest ({MONTHS[quiet - 1]})",
+                   "Average energy per hour for each calendar month. Months with no bar have no data for this selection.",
+                   style(fig, "Average energy (kWh per hour)", None, 360, hover="closest"),
+                   table=mdf.pipe(rnd, 3).rename(columns={"kwh": "Average kWh"}))
     with t4:
         corr = load_csv("weather_corr.csv")
         corr = corr if city == "All cities" else corr[corr.city == city]
+        r = float(corr["temp"].mean())
         s = d.sample(min(len(d), 6000), random_state=42)
         fig = px.scatter(s, x="temp_c", y="kwh", opacity=0.35, color_discrete_sequence=[NORMAL])
-        st.plotly_chart(style(fig, "Energy (kWh per hour)", "Outdoor temperature (°C)"), width="stretch")
-        how_to_read("each dot is one hour. If dots rise to the right, the home uses more energy when it is hot.")
-        st.write(f"Average correlation of energy with temperature for this selection: **{corr['temp'].mean():.2f}** "
-                 f"(humidity {corr['humidity'].mean():.2f}, rain {corr['precip'].mean():.2f}). Closer to 1 means a stronger link.")
+        fig.update_traces(marker=dict(size=7), hovertemplate="%{x:.0f} °C: %{y:.2f} kWh<extra></extra>")
+        title = "Hotter hours go with higher use" if r > 0.2 else "Only a weak link between temperature and use"
+        chart_card(f"{title} (correlation {r:.2f})",
+                   f"Each dot is one hour. Average correlation for this selection: temperature {r:.2f}, humidity {corr['humidity'].mean():.2f}, rain {corr['precip'].mean():.2f} (closer to 1 is a stronger link).",
+                   style(fig, "Energy (kWh per hour)", "Outdoor temperature (°C)", 380, hover="closest"),
+                   how="if the dots rise to the right, the home uses more energy when it is hot.",
+                   table=s[["timestamp", "temp_c", "kwh"]].head(500).pipe(rnd, 2))
+    footer_nav("Data Explorer")
 
 
 def page_normal():
-    st.header("Normal Behaviour")
-    st.write("This is what a typical day looks like for a home. The shaded band holds the middle 80% of its days at that hour.")
-    hid = house_picker("normal_house")
+    header("Step 2 of 7 · Normal", "Normal Behaviour",
+           "What a typical day looks like for one home. This is the baseline every hour is compared with.")
+    with card():
+        hid = house_picker("normal_house")
     prof = load_csv("profile_hourly.csv")
     p = prof[prof.household_id == hid]
     if p.empty:
         empty_msg(); return
+    wk = p[p.is_weekend == 0].sort_values("hour")
+    we = p[p.is_weekend == 1].sort_values("hour")
+    gap(10)
+    callout(f"On weekdays this home typically peaks around <b>{int(wk.loc[wk.normal.idxmax(), 'hour']):02d}:00</b> "
+            f"({wk.normal.max():.2f} kWh) and is quietest around <b>{int(wk.loc[wk.normal.idxmin(), 'hour']):02d}:00</b> ({wk.normal.min():.2f} kWh). "
+            "The shaded band holds the middle 80% of days; a reading far outside it is unusual for this home.")
+    ymax = float(max(wk.p90.max(), we.p90.max())) * 1.05          # same scale on both panels so they can be compared
     cols = st.columns(2)
-    for col, wk, title in [(cols[0], 0, "Weekdays"), (cols[1], 1, "Weekends")]:
-        q = p[p.is_weekend == wk].sort_values("hour")
+    for col, q, title in [(cols[0], wk, "Weekdays"), (cols[1], we, "Weekends")]:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=q.hour, y=q.p90, line=dict(width=0), showlegend=False, hoverinfo="skip"))
-        fig.add_trace(go.Scatter(x=q.hour, y=q.p10, fill="tonexty", fillcolor="rgba(31,111,139,0.18)", line=dict(width=0), name="Normal band (10%-90%)"))
-        fig.add_trace(go.Scatter(x=q.hour, y=q.normal, line=dict(color=NORMAL, width=3), name="Typical (median)"))
-        fig.update_layout(title=title)
-        col.plotly_chart(style(fig, "Energy (kWh per hour)", "Hour of day"), width="stretch")
-    how_to_read("the dark line is the typical use at each hour. A reading far outside the shaded band is unusual for this home.")
+        fig.add_trace(go.Scatter(x=q.hour, y=q.p10, fill="tonexty", fillcolor="rgba(42,120,214,0.14)", line=dict(width=0),
+                                 name="Normal band (10%–90%)", hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=q.hour, y=q.normal, line=dict(color=NORMAL, width=2), name="Typical (median)",
+                                 hovertemplate="%{y:.2f} kWh<extra></extra>"))
+        with col:
+            chart_card(title, "Typical use for each hour of the day (both panels share one scale)",
+                       style(fig, "Energy (kWh per hour)", "Hour of day", 340).update_yaxes(range=[0, ymax]),
+                       table=q[["hour", "p10", "normal", "p90"]].rename(columns={"p10": "Low (10%)", "normal": "Typical", "p90": "High (90%)"}))
+    footer_nav("Normal Behaviour")
 
 
 def page_detector():
-    st.header("Anomaly Detector")
-    st.warning(DISCLAIMER)
+    header("Step 3 of 7 · Detect", "Anomaly Detector",
+           "Pick a home and a method to see which hours were flagged, how strongly, and why.")
+    callout(DISCLAIMER, warn=True)
     df = load_hourly()
-    c1, c2 = st.columns(2)
-    with c1:
-        hid = house_picker("det_house")
-    method_name = c2.selectbox("Method", list(METHODS))
-    flag = METHODS[method_name]
-    h = df[df.household_id == hid].sort_values("timestamp")
-    if h.empty:
-        empty_msg(); return
-    top = h.loc[h["if_score"].idxmax(), "timestamp"]
-    lo, hi = h.timestamp.min().date(), h.timestamp.max().date()
-    start = max(lo, (top - pd.Timedelta(days=15)).date())
-    end = min(hi, (top + pd.Timedelta(days=15)).date())
-    rng = st.date_input("Date range (starts around this home's strongest anomaly)", (start, end), min_value=lo, max_value=hi)
+    with card():
+        c1, c2, c3 = st.columns([1, 1.2, 1.6])
+        with c1:
+            hid = house_picker("det_house")
+        method_name = c2.selectbox("Method", list(METHODS))
+        flag = METHODS[method_name]
+        h = df[df.household_id == hid].sort_values("timestamp")
+        if h.empty:
+            empty_msg(); return
+        top = h.loc[h["if_score"].idxmax(), "timestamp"]
+        lo, hi = h.timestamp.min().date(), h.timestamp.max().date()
+        start = max(lo, (top - pd.Timedelta(days=15)).date())
+        end = min(hi, (top + pd.Timedelta(days=15)).date())
+        rng = c3.date_input("Date range (starts around this home's strongest anomaly)", (start, end), min_value=lo, max_value=hi)
     if len(rng) != 2:
         empty_msg("Pick both a start and an end date."); return
     w = h[(h.timestamp.dt.date >= rng[0]) & (h.timestamp.dt.date <= rng[1])]
     if w.empty:
         empty_msg(); return
     a = w[w[flag]]
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Hours shown", f"{len(w):,}")
-    m2.metric("Flagged hours", f"{len(a):,}")
-    m3.metric("Share flagged", f"{100 * len(a) / len(w):.1f}%")
+    gap(10)
+    k = st.columns(4)
+    kpi(k[0], "Hours shown", f"{len(w):,}", f"{rng[0]:%d %b} to {rng[1]:%d %b %Y}")
+    kpi(k[1], "Flagged hours", f"{len(a):,}", method_name.split(" (")[0], hot=True)
+    kpi(k[2], "Share flagged", f"{100 * len(a) / len(w):.1f}%", "of the hours shown")
+    if len(a):
+        s = a.loc[a.kwh.sub(a.base_med).idxmax()]
+        kpi(k[3], "Strongest flagged hour", f"{s.kwh:.2f} kWh", f"{ts(s.timestamp)} · normal {s.base_med:.2f}")
+    else:
+        kpi(k[3], "Strongest flagged hour", "none", "no hours flagged in this window")
+    gap(12)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=w.timestamp, y=w.kwh, mode="lines", line=dict(color=NORMAL, width=1.4), name="Energy used"))
-    fig.add_trace(go.Scatter(x=w.timestamp, y=w.base_med, mode="lines", line=dict(color=GREY, width=1, dash="dot"), name="Normal for this hour"))
-    fig.add_trace(go.Scatter(x=a.timestamp, y=a.kwh, mode="markers", marker=dict(color=ANOMALY, size=9, symbol="diamond"), name="Flagged"))
-    st.plotly_chart(style(fig, "Energy (kWh per hour)", None, 420), width="stretch")
-    how_to_read("the blue line is real use. The grey dotted line is what is normal for that hour. Orange diamonds are flagged hours.")
+    fig.add_trace(go.Scatter(x=w.timestamp, y=w.kwh, mode="lines", line=dict(color=NORMAL, width=2), name="Energy used",
+                             hovertemplate="%{y:.2f} kWh<extra>Used</extra>"))
+    fig.add_trace(go.Scatter(x=w.timestamp, y=w.base_med, mode="lines", line=dict(color=MUTED, width=1.5), name="Normal for this hour",
+                             hovertemplate="%{y:.2f} kWh<extra>Normal</extra>"))
+    if len(a):
+        fig.add_trace(go.Scatter(
+            x=a.timestamp, y=a.kwh, mode="markers", name="Flagged (bigger = more methods agree)",
+            marker=dict(color=ANOMALY, size=8 + 3 * a.consensus.clip(lower=1), line=dict(color=SURFACE, width=2)),
+            customdata=a[["reason", "base_med", "consensus"]].to_numpy(),
+            hovertemplate="<b>%{y:.2f} kWh</b> (normal %{customdata[1]:.2f})<br>%{customdata[0]}<br>%{customdata[2]} of 4 methods agree<extra>Flagged</extra>"))
+        s = a.loc[a.kwh.sub(a.base_med).idxmax()]
+        fig.add_annotation(x=s.timestamp, y=s.kwh, text="Strongest", showarrow=True, arrowhead=0, ax=0, ay=-34,
+                           font=dict(size=12, color=INK2), arrowcolor=BASELINE)
+    title = (f"House {hid}: {len(a)} flagged hours in {len(w):,} ({100 * len(a) / len(w):.1f}%)" if len(a)
+             else f"House {hid}: no hours flagged in this window")
+    chart_card(title, f"Method: {method_name}", style(fig, "Energy (kWh per hour)", None, 420, hover="closest"),
+               how="blue is real use, grey is what is normal for that hour. Orange dots are flagged hours; hover one to see why.",
+               table=w[["timestamp", "kwh", "base_med", "reason", "consensus"]].pipe(rnd, 2).rename(columns={
+                   "kwh": "Used (kWh)", "base_med": "Normal (kWh)", "reason": "Reason", "consensus": "Methods agreeing"}).head(1000))
 
     if flag in SCORES:
-        fig2 = px.line(w, x="timestamp", y=SCORES[flag], color_discrete_sequence=[GREY])
-        fig2.add_trace(go.Scatter(x=a.timestamp, y=a[SCORES[flag]], mode="markers", marker=dict(color=ANOMALY, size=7), name="Flagged"))
-        st.plotly_chart(style(fig2, "Anomaly score (higher = more unusual)", None, 260), width="stretch")
-        how_to_read("the model's score for each hour. Flagged hours are the ones with the highest scores.")
+        fig2 = go.Figure(go.Scatter(x=w.timestamp, y=w[SCORES[flag]], mode="lines", line=dict(color=MUTED, width=1.5), name="Score",
+                                    hovertemplate="%{y:.2f}<extra>Score</extra>"))
+        if len(a):
+            fig2.add_trace(go.Scatter(x=a.timestamp, y=a[SCORES[flag]], mode="markers", name="Flagged",
+                                      marker=dict(color=ANOMALY, size=9, line=dict(color=SURFACE, width=2))))
+        gap(12)
+        chart_card("Anomaly score", "The model's score for each hour. Flagged hours are the highest scores.",
+                   style(fig2, "Score (higher = more unusual)", None, 240, hover="closest"))
+
+    gap(12)
     t1, t2 = st.tabs(["Flagged hours", "Whole days that look unusual"])
     with t1:
         if a.empty:
@@ -211,7 +411,7 @@ def page_detector():
             tab = a[["timestamp", "kwh", "base_med", "temp_c", "reason", "consensus"]].rename(columns={
                 "timestamp": "Time", "kwh": "Used (kWh)", "base_med": "Normal (kWh)", "temp_c": "Temp (°C)",
                 "reason": "Why it was flagged", "consensus": "Methods agreeing (of 4)"})
-            st.dataframe(tab.round(2), width="stretch", hide_index=True)
+            st.dataframe(tab.pipe(rnd, 2), width="stretch", hide_index=True)
             st.download_button("Download flagged hours (CSV)", tab.to_csv(index=False).encode(), f"house_{hid}_flagged.csv", "text/csv")
     with t2:
         day = load_parquet("daily_anomalies.parquet")
@@ -220,152 +420,240 @@ def page_detector():
             st.info("No unusual days for this household.")
         else:
             st.dataframe(day[["date", "total_kwh", "peak_kwh", "daily_reason"]].rename(columns={
-                "date": "Day", "total_kwh": "Total (kWh/day)", "peak_kwh": "Highest hour (kWh)", "daily_reason": "Why"}).round(2),
+                "date": "Day", "total_kwh": "Total (kWh/day)", "peak_kwh": "Highest hour (kWh)", "daily_reason": "Why"}).pipe(rnd, 2),
                 width="stretch", hide_index=True)
-        how_to_read("a day is flagged when its total or shape is unusual for this home (checked with Isolation Forest on daily features).")
+        st.caption("A day is flagged when its total or shape is unusual for this home (Isolation Forest on daily features).")
+    footer_nav("Anomaly Detector")
 
 
 def page_clusters():
-    st.header("Household Clusters")
-    st.write("Households are grouped by how they use electricity (size, time of day, weekend pattern, sensitivity to heat).")
+    header("Step 4 of 7 · Group", "Household Clusters",
+           "Households grouped by how they use electricity: size, time of day, weekends and sensitivity to heat.")
     hc = load_csv("household_clusters.csv")
     summ = load_csv("cluster_summary.csv")
     var = load_csv("pca_variance.csv")
-    fig = px.scatter(hc, x="pc1", y="pc2", color="cluster_name", hover_data=["household_id", "city", "mean_kwh"],
-                     color_discrete_sequence=px.colors.qualitative.Safe, symbol="city")
-    st.plotly_chart(style(fig, f"PC2 ({100 * var.explained[1]:.0f}% of variation)", f"PC1 ({100 * var.explained[0]:.0f}% of variation)", 460), width="stretch")
-    how_to_read("each dot is a household. Close dots behave alike. PCA squeezes 8 behaviour numbers into 2 axes just for drawing.")
-    t1, t2, t3 = st.tabs(["Group profiles", "Cities in each group", "How K was chosen"])
-    with t1:
-        st.dataframe(summ.rename(columns={"cluster_name": "Group", "households": "Homes", "mean_kwh": "Average kWh/h",
-                     "peak_to_avg": "Peak ÷ average", "evening_share": "Evening share", "night_share": "Night share",
-                     "temp_corr": "Link to temperature", "multi_method_rate_pct": "Hours flagged by 2+ methods (%)"}),
-                     width="stretch", hide_index=True)
-        st.caption("Isolation Forest flags about 1% of hours in every home by design, so we compare groups by how often two or more methods agree.")
-    with t2:
-        st.dataframe(pd.crosstab(hc.cluster_name, hc.city), width="stretch")
-    with t3:
+    names = sorted(hc.cluster_name.unique())
+    color = {n: CLUSTER_COLORS[i % 3] for i, n in enumerate(names)}
+    symbol = {n: CLUSTER_SYMBOLS[i % 3] for i, n in enumerate(names)}
+    fig = go.Figure()
+    for n in names:
+        g = hc[hc.cluster_name == n]
+        fig.add_trace(go.Scatter(x=g.pc1, y=g.pc2, mode="markers", name=n.replace(": ", " · "),
+                                 marker=dict(color=color[n], symbol=symbol[n], size=12, line=dict(color=SURFACE, width=2)),
+                                 customdata=g[["household_id", "city", "mean_kwh"]].to_numpy(),
+                                 hovertemplate="House %{customdata[0]} (%{customdata[1]})<br>%{customdata[2]:.2f} kWh per hour<extra></extra>"))
+    style(fig, f"PC2 ({100 * var.explained[1]:.0f}% of variation)", f"PC1 ({100 * var.explained[0]:.0f}% of variation)", 470, hover="closest")
+    fig.update_layout(legend=dict(orientation="h", x=0, y=-0.18, xanchor="left"))
+    chart_card(f"{len(hc)} homes fall into {len(names)} behaviour groups",
+               "Each dot is a household. Dots close together behave alike. Colour and shape both show the group.",
+               fig, how="PCA squeezes 8 behaviour numbers into 2 axes just so we can draw them. Groups overlap, so read them as tendencies, not sharp boxes.",
+               table=hc[["household_id", "city", "cluster_name", "mean_kwh"]].rename(columns={"cluster_name": "Group", "mean_kwh": "Average kWh/h"}).pipe(rnd, 2))
+    gap(12)
+    cols = st.columns(len(summ))
+    for col, n in zip(cols, names):
+        r = summ[summ.cluster_name == n].iloc[0]
+        cities = hc[hc.cluster_name == n].city.value_counts()
+        with col:
+            with card():
+                st.markdown(f'<div class="pill"><span class="swatch" style="background:{color[n]}"></span>{n.split(":")[0]}</div>'
+                            f'<div class="insight">{n.split(": ", 1)[1].capitalize()}</div>'
+                            f'<div class="insight-sub">{int(r.households)} homes · {r.mean_kwh:.2f} kWh per hour on average<br>'
+                            f'{r.evening_share:.0%} of use in the evening · {r.night_share:.0%} at night<br>'
+                            f'Link to temperature {r.temp_corr:.2f} · flagged by 2+ methods {r.multi_method_rate_pct:.1f}%<br>'
+                            f'Mostly in: {", ".join(cities.index[:3])}</div>', unsafe_allow_html=True)
+    gap(8)
+    with st.expander("How the number of groups (K) was chosen"):
         k = load_csv("cluster_k_selection.csv")
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=k.k, y=k.silhouette, name="Silhouette (higher is better)", line=dict(color=NORMAL)))
-        fig.add_trace(go.Scatter(x=k.k, y=k.inertia, name="Inertia (elbow)", yaxis="y2", line=dict(color=ANOMALY, dash="dot")))
-        fig.update_layout(yaxis2=dict(overlaying="y", side="right"))
-        st.plotly_chart(style(fig, "Silhouette", "Number of groups K", 320), width="stretch")
-        st.caption("Silhouette is low (about 0.2), so groups overlap: they are a helpful summary, not sharp boxes. We chose K = 3, "
-                   "the best silhouette among K = 3 to 6, because K = 2 is too coarse to be useful.")
+        fig.add_trace(go.Scatter(x=k.k, y=k.silhouette, name="Silhouette (higher is better)", mode="lines+markers",
+                                 line=dict(color=NORMAL, width=2), marker=dict(size=9, line=dict(color=SURFACE, width=2))))
+        st.plotly_chart(style(fig, "Silhouette", "Number of groups K", 280, hover="x"), width="stretch", config=PLOT_CONFIG)
+        st.caption(f"The silhouette score is low (best {k.silhouette.max():.2f}), so groups overlap. We chose K = {len(names)}, the best score "
+                   "among K = 3 to 6, because K = 2 is too coarse to be useful. Isolation Forest flags about 1% of hours in every home by design, "
+                   "so groups are compared by how often two or more methods agree.")
+        st.dataframe(k.pipe(rnd, 3), width="stretch", hide_index=True)
+    footer_nav("Household Clusters")
 
 
 def page_weather():
-    st.header("Weather Impact")
+    header("Step 5 of 7 · Weather", "Weather Impact",
+           "Hot weather raises cooling use, so a high reading is not always unusual. Here we separate heat-driven highs from truly unusual ones.")
     df = load_hourly()
-    st.write("Hot weather raises cooling use, so a high reading is not always unusual. "
-             "Here we separate **flags explained by temperature** from **flags that are unusual even allowing for temperature**.")
+    wc = load_csv("weather_check.csv")
+    t_hot = wc[wc.measure.str.contains("time-only")].iloc[0]
+    w_hot = wc[wc.measure.str.contains("weather-aware")].iloc[0]
+    callout(f"Without weather, the hottest 10% of hours look “high” <b>{t_hot.ratio_hot_vs_other:.1f}×</b> more often than other hours. "
+            f"After allowing for temperature this drops to <b>{w_hot.ratio_hot_vs_other:.1f}×</b>, so most heat-driven highs are explained.")
     t1, t2, t3 = st.tabs(["Energy vs temperature", "Explained vs truly unusual", "Heat check"])
     with t1:
-        hid = house_picker("wx_house")
+        with card():
+            hid = house_picker("wx_house")
+        gap(10)
         h = df[df.household_id == hid]
         s = h.sample(min(len(h), 6000), random_state=42)
-        s = s.assign(Status=s.flag_if.map({True: "Flagged (Isolation Forest)", False: "Normal"}))
-        fig = px.scatter(s, x="temp_c", y="kwh", color="Status", opacity=0.5,
-                         color_discrete_map={"Normal": NORMAL, "Flagged (Isolation Forest)": ANOMALY})
-        st.plotly_chart(style(fig, "Energy (kWh per hour)", "Outdoor temperature (°C)"), width="stretch")
-        how_to_read("each dot is an hour. Flagged hours (orange) that sit where the cloud rises with heat are less surprising.")
+        fl = s[s.flag_if]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=s[~s.flag_if].temp_c, y=s[~s.flag_if].kwh, mode="markers", name="Normal",
+                                 marker=dict(color=NORMAL, size=6, opacity=0.35), hovertemplate="%{x:.0f} °C: %{y:.2f} kWh<extra></extra>"))
+        fig.add_trace(go.Scatter(x=fl.temp_c, y=fl.kwh, mode="markers", name="Flagged (Isolation Forest)",
+                                 marker=dict(color=ANOMALY, size=9, line=dict(color=SURFACE, width=2)),
+                                 hovertemplate="%{x:.0f} °C: %{y:.2f} kWh (flagged)<extra></extra>"))
+        chart_card(f"House {hid}: where do the flagged hours sit?",
+                   "Flagged hours inside the rising cloud of dots (hot and busy) are less surprising than those far above it.",
+                   style(fig, "Energy (kWh per hour)", "Outdoor temperature (°C)", 380, hover="closest"),
+                   how="each dot is an hour. Orange dots are flagged hours.", table=s[["timestamp", "temp_c", "kwh", "flag_if"]].head(500).pipe(rnd, 2))
         tr = load_csv("temp_response.csv")
         tr = tr[tr.household_id == hid]
         if not tr.empty:
-            st.plotly_chart(style(px.line(tr, x="temp_bin", y="mean_kwh", markers=True, color_discrete_sequence=[NORMAL]),
-                                  "Average kWh per hour", "Temperature band (°C, 2-degree steps)", 280), width="stretch")
+            gap(12)
+            f2 = go.Figure(go.Scatter(x=tr.temp_bin, y=tr.mean_kwh, mode="lines+markers", line=dict(color=NORMAL, width=2),
+                                      marker=dict(size=9, line=dict(color=SURFACE, width=2)), hovertemplate="%{x} °C: %{y:.2f} kWh<extra></extra>"))
+            chart_card("How this home's use responds to temperature", "Average energy in each 2-degree temperature band.",
+                       style(f2, "Average kWh per hour", "Temperature band (°C)", 280), table=tr[["temp_bin", "mean_kwh", "hours"]])
     with t2:
         f = df[df.consensus > 0]
         rc = f.reason.value_counts().reset_index()
         rc.columns = ["Reason", "Hours"]
-        fig = px.bar(rc, x="Hours", y="Reason", orientation="h", color_discrete_sequence=[NORMAL])
-        st.plotly_chart(style(fig, None, "Flagged hours (any method)", 340), width="stretch")
+        rc = rc.iloc[::-1]
         n_exp = int((f.reason == "High for this hour, but typical for this temperature").sum())
         n_unu = int((f.reason == "Much higher than usual for this hour, even allowing for temperature").sum())
-        st.write(f"Of the flagged hours that were high, **{n_exp:,}** are typical for the temperature and **{n_unu:,}** stay unusual even after allowing for it.")
-        how_to_read("every flagged hour gets one plain-language reason. 'Typical for this temperature' means the weather-aware baseline does not find it unusual.")
+        fig = go.Figure(go.Bar(x=rc.Hours, y=rc.Reason, orientation="h", marker=dict(color=NORMAL, cornerradius=4), width=0.5,
+                               hovertemplate="%{y}: %{x:,} hours<extra></extra>"))
+        style(fig, None, "Flagged hours", 80 + 50 * len(rc), hover="closest").update_layout(margin=dict(l=4, r=24, t=10, b=8))
+        chart_card(f"{n_unu:,} high hours stay unusual even after allowing for temperature; {n_exp:,} are typical for the heat",
+                   "Why hours flagged by at least one method were flagged. Every flagged hour gets one plain-language reason.",
+                   fig, how="“Typical for this temperature” means the weather-aware baseline does not find the hour unusual.", table=rc.iloc[::-1])
     with t3:
-        wc = load_csv("weather_check.csv")
-        st.dataframe(wc.rename(columns={"measure": "Measure", "hot_hours_pct": "In the hottest 10% of hours (%)",
-                     "other_hours_pct": "All other hours (%)", "ratio_hot_vs_other": "Ratio"}), width="stretch", hide_index=True)
-        st.caption("The time-only score calls hot hours 'high' 2.1 times more often. The weather-aware score cuts that to 1.1 times, "
-                   "so most heat-driven highs are explained. The model-based flags still cluster in heat (about 3 times), so some "
-                   "extreme-heat hours remain flagged.")
+        fig = go.Figure()
+        hv = wc[wc.measure.str.startswith("High")]
+        labels = ["Time-only baseline", "Weather-aware baseline"]
+        fig.add_trace(go.Bar(x=labels, y=hv.hot_hours_pct, name="Hottest 10% of hours", marker=dict(color=ANOMALY, cornerradius=4),
+                             hovertemplate="%{y:.1f}% of hot hours<extra></extra>"))
+        fig.add_trace(go.Bar(x=labels, y=hv.other_hours_pct, name="All other hours", marker=dict(color=NORMAL, cornerradius=4),
+                             hovertemplate="%{y:.1f}% of other hours<extra></extra>"))
+        fig.update_layout(barmode="group", bargap=0.55, bargroupgap=0.08)
+        chart_card("Allowing for temperature removes most of the heat effect",
+                   "Share of hours called “high”, for the hottest 10% of hours versus all other hours.",
+                   style(fig, "Hours called “high” (%)", None, 340, hover="closest"),
+                   how="the orange bar is the hottest 10% of hours. The closer it is to the blue bar, the less the baseline is fooled by heat.",
+                   table=wc.rename(columns={"measure": "Measure", "hot_hours_pct": "Hottest 10% (%)", "other_hours_pct": "Other hours (%)", "ratio_hot_vs_other": "Ratio"}))
+        st.caption("The model-based flags (Isolation Forest, Z-score, IQR) still cluster in heat, so some extreme-heat hours remain flagged. See the table view.")
+    footer_nav("Weather Impact")
 
 
 def page_methods():
-    st.header("Method Comparison & Evaluation")
-    st.write("There are no true anomaly labels in this dataset, so we tested the methods by **injecting known anomalies into real data** "
-             "(a controlled test, not real labels) and checking which methods find them.")
+    header("Step 6 of 7 · Evaluate", "Method Comparison & Evaluation",
+           "There are no true anomaly labels in this dataset, so we tested each method by injecting known anomalies into real data. "
+           "This is a controlled test, not real labels.")
     comp = load_csv("method_comparison.csv")
-    st.subheader("Summary table")
-    st.dataframe(comp.rename(columns={"method": "Method", "flag_rate_pct": "Flags on real data (%)", "precision": "Precision",
-                 "recall": "Recall", "f1": "F1", "auc": "AUC (ranking quality)"}), width="stretch", hide_index=True)
-    st.caption("Precision: of the hours flagged, how many were truly injected. Recall: of the injected hours, how many were found. "
-               "F1 combines both. AUC measures how well the raw score ranks injected hours above normal ones, whatever threshold is used.")
     inj = load_csv("injection_results.csv")
-    t1, t2, t3, t4 = st.tabs(["By anomaly type", "Agreement", "Sensitivity", "Which method?"])
-    with t1:
-        metric = st.radio("Metric", ["auc", "recall", "f1"], horizontal=True, format_func=lambda m: {"auc": "AUC", "recall": "Recall", "f1": "F1"}[m])
-        d = inj[inj.type.isin(["spike", "drop", "shift", "flatline"])]
-        fig = px.bar(d, x="type", y=metric, color="method", barmode="group", color_discrete_sequence=px.colors.qualitative.Safe)
-        st.plotly_chart(style(fig, metric.upper(), "Injected anomaly type", 420), width="stretch")
-        how_to_read("spike = one very high hour, drop = sudden zero, shift = 6 hours at 2.5x, flatline = 6 hours stuck at one value. Taller is better.")
-    with t2:
+    cons = comp[comp.method.str.startswith("Consensus")].iloc[0]
+    lof = comp[comp.method == "Local Outlier Factor"].iloc[0]
+    spike_auc = inj[(inj.method == "Isolation Forest") & (inj.type == "spike")].auc.iloc[0]
+    st.markdown("**Which method should you use?**")
+    r = st.columns(3)
+    for col, pill, title, text in [
+        (r[0], "1 · Rank", "Isolation Forest", f"Best at spikes (AUC {spike_auc:.2f}), fast, gives a score to rank hours. Our main method."),
+        (r[1], "2 · Confirm", "2 or more methods agree", f"Precision {cons.precision:.2f}: when several methods agree it is almost always a real injected anomaly. Use for high-confidence alerts."),
+        (r[2], "3 · Look for stuck values", "Local Outlier Factor", f"Best overall ranking (AUC {lof.auc:.2f}) and the only method that notices flat-lined readings, but only {lof.precision:.2f} precision.")]:
+        with col:
+            with card():
+                st.markdown(f'<div class="pill">{pill}</div><div class="insight">{title}</div><div class="insight-sub">{text}</div>', unsafe_allow_html=True)
+    gap(14)
+
+    with card():
+        metric = st.radio("Score to show", ["auc", "recall", "f1"], horizontal=True,
+                          format_func=lambda m: {"auc": "AUC (ranking quality)", "recall": "Recall (found)", "f1": "F1 (balance)"}[m])
+    order = ["spike", "drop", "shift", "flatline", "all"]
+    d = inj[inj.type.isin(order)].pivot(index="method", columns="type", values=metric)[order]
+    d = d.reindex(list(SHORT)).rename(index=SHORT, columns={"all": "Overall", "spike": "Spike", "drop": "Drop to zero", "shift": "6-hour shift", "flatline": "Flat line"})
+    fig = px.imshow(d, text_auto=".2f", color_continuous_scale=SEQUENTIAL, zmin=0, zmax=1, aspect="auto")
+    fig.update_traces(xgap=2, ygap=2, hovertemplate="%{y} on %{x}: %{z:.2f}<extra></extra>")
+    style(fig, None, None, 330, hover="closest")
+    fig.update_xaxes(side="top", showgrid=False, tickfont=dict(size=13))
+    fig.update_yaxes(showgrid=False, tickfont=dict(size=13))
+    fig.update_layout(coloraxis_showscale=False)
+    gap(10)
+    chart_card("Scorecard: how well each method finds each kind of injected anomaly",
+               f"{'Brighter' if IS_DARK else 'Darker'} blue is better. Spike = one very high hour; Drop = sudden zero; 6-hour shift = use ×2.5; Flat line = value stuck for 6 hours.",
+               fig, how="read across a row to see a method's strengths. No row is strong everywhere, which is why we combine methods.",
+               table=d.pipe(rnd, 3).reset_index().rename(columns={"method": "Method"}))
+    gap(12)
+    cc = st.columns(2)
+    with cc[0]:
         agr = load_csv("agreement.csv")
-        pv = agr.pivot(index="method_a", columns="method_b", values="jaccard")
-        names = {"flag_if": "Isolation Forest", "flag_lof": "LOF", "flag_z": "Z-score", "flag_iqr": "IQR"}
-        pv = pv.rename(index=names, columns=names)
-        fig = px.imshow(pv, text_auto=".2f", color_continuous_scale="Blues", zmin=0, zmax=1)
-        st.plotly_chart(style(fig, None, None, 380), width="stretch")
-        how_to_read("1.0 means two methods flag exactly the same hours, 0 means no overlap. Low numbers show the methods catch different things, which is why combining them helps.")
-    with t3:
-        st.dataframe(load_csv("sensitivity.csv").rename(columns={"contamination": "Contamination (expected share)",
-                     "flagged_hours": "Flagged hours", "share_pct": "Share (%)"}), width="stretch", hide_index=True)
-        st.caption("Contamination is the share of hours we expect to be anomalous. Flags grow in step with it, so choose it to match how many alerts you can inspect.")
-    with t4:
-        st.markdown(
-            "- **Isolation Forest (main method):** very good at spikes, gives a score for ranking, fast. Weaker on frozen-meter patterns.\n"
-            "- **Local Outlier Factor:** best overall ranking in the test and the only one that notices flat-lined or zero hours, "
-            "but it often disagrees with the others and has the lowest precision.\n"
-            "- **Z-score / IQR per home and hour:** simple and easy to explain. Z-score is precise; IQR flags too many hours (5%).\n"
-            "- **Global z-score:** ignores that homes differ and performs worst. This is why we learn normal per household.\n"
-            "- **Recommendation:** use Isolation Forest to rank unusual hours, treat hours flagged by **2 or more methods** as high confidence "
-            "(precision above 0.9 in the test), and use LOF to look for stuck or zero readings.")
+        nm = {"flag_if": "Isolation Forest", "flag_lof": "LOF", "flag_z": "Z-score", "flag_iqr": "IQR"}
+        pv = agr.pivot(index="method_a", columns="method_b", values="jaccard").rename(index=nm, columns=nm)
+        pv = pv.loc[list(nm.values()), list(nm.values())]
+        fig = px.imshow(pv, text_auto=".2f", color_continuous_scale=SEQUENTIAL, zmin=0, zmax=1, aspect="auto")
+        fig.update_traces(xgap=2, ygap=2, hovertemplate="%{y} vs %{x}: %{z:.2f}<extra></extra>")
+        style(fig, None, None, 330, hover="closest").update_layout(coloraxis_showscale=False)
+        chart_card("The methods catch different things", "Overlap of flagged hours (1.0 = identical, 0 = none).",
+                   fig, how="low numbers off the diagonal mean the methods disagree, so combining them adds information.", table=pv.pipe(rnd, 3).reset_index())
+    with cc[1]:
+        with card():
+            insight("Summary table", "Flag rate on real data and injection-test scores")
+            st.dataframe(comp.rename(columns={"method": "Method", "flag_rate_pct": "Flags on real data (%)", "precision": "Precision",
+                         "recall": "Recall", "f1": "F1", "auc": "AUC"}), width="stretch", hide_index=True)
+            st.caption("Precision: of the hours flagged, how many were injected. Recall: of the injected hours, how many were found. "
+                       "AUC: how well the raw score ranks injected hours above normal ones, whatever the threshold.")
+            sens = load_csv("sensitivity.csv")
+            st.markdown("**Sensitivity (contamination).** Isolation Forest flags grow in step with the expected share: " +
+                        ", ".join(f"{x.contamination:.1%} → {int(x.flagged_hours):,} hours" for x in sens.itertuples()) + ".")
+    gap(8)
+    callout(f"The naive <b>global z-score</b> (all homes together) is the weakest method (F1 {comp[comp.method.str.startswith('Global')].f1.iloc[0]:.2f}). "
+            "That is why we learn what is normal <b>per household</b>.")
+    footer_nav("Method Comparison")
 
 
 def page_about():
-    st.header("About & Limitations")
-    st.markdown(
-        "**Data:** Residential Energy and Weather Data Pakistan (REWD-P), LUMS Energy Institute: "
-        "[lei.lums.edu.pk](https://lei.lums.edu.pk/datasets/residential-energy-and-weather-data-pakistan.html). "
-        "Smart-meter readings every minute from households in Lahore, Multan, Peshawar, Karachi, Islamabad and Skardu, plus hourly weather.")
-    st.markdown("#### What we did, in simple words")
-    st.markdown(
-        "1. Cleaned the minute data and turned it into **hourly energy** (kWh).\n"
-        "2. Added the **weather** of the home's city for each hour.\n"
-        "3. Learned each home's **normal pattern** (typical use for each hour, weekday or weekend, and each temperature range).\n"
-        "4. Measured how far every hour is from normal and flagged unusual hours with four methods.\n"
-        "5. Grouped similar homes with K-Means and tested the methods by injecting known anomalies.")
-    st.markdown("#### Limitations")
-    st.markdown(
-        "- The data has **no real anomaly labels**, so accuracy is estimated with injected, synthetic anomalies. Scores on real anomalies may differ.\n"
-        "- We found **59 households, not 60** as the proposal says (the dataset page lists 59). Coverage differs by home: most have about one year, a few have gaps.\n"
-        "- Timestamps have no timezone in the source. We assume local Pakistan time.\n"
-        "- Two homes report solar generation and some may use net metering. We use the 'Usage' column as given.\n"
-        "- Zero readings may be real outages (load-shedding). We keep them and flag them as 'near zero'.\n"
-        "- Each home's normal pattern is learned from the whole recorded period (offline analysis, not live monitoring).\n"
-        "- Cluster separation is modest (silhouette about 0.2).\n"
-        "- Only 59 homes, so results describe this sample and not all of Pakistan.")
-    st.warning(DISCLAIMER)
+    header("Step 7 of 7 · Context", "About & Limitations", "Where the data comes from, what we did, and what you should keep in mind.")
+    c = st.columns(2)
+    with c[0]:
+        with card():
+            insight("Data")
+            st.markdown("**Residential Energy and Weather Data Pakistan (REWD-P)**, LUMS Energy Institute: "
+                        "[lei.lums.edu.pk](https://lei.lums.edu.pk/datasets/residential-energy-and-weather-data-pakistan.html). "
+                        "Smart-meter readings every minute from households in Lahore, Multan, Peshawar, Karachi, Islamabad and Skardu, plus hourly weather.")
+        gap(12)
+        with card():
+            insight("What we did, in simple words")
+            st.markdown(
+                '<div class="step"><div class="num">1</div><div class="txt">Cleaned the minute data and turned it into <b style="display:inline">hourly energy</b> (kWh).</div></div>'
+                '<div class="step"><div class="num">2</div><div class="txt">Added the <b style="display:inline">weather</b> of the home\'s city for each hour.</div></div>'
+                '<div class="step"><div class="num">3</div><div class="txt">Learned each home\'s <b style="display:inline">normal pattern</b>: typical use per hour, weekday or weekend, and temperature range.</div></div>'
+                '<div class="step"><div class="num">4</div><div class="txt">Measured how far each hour is from normal and flagged unusual hours with four methods.</div></div>'
+                '<div class="step"><div class="num">5</div><div class="txt">Grouped similar homes with K-Means and tested the methods by injecting known anomalies.</div></div>',
+                unsafe_allow_html=True)
+    with c[1]:
+        with card():
+            insight("Limitations")
+            st.markdown(
+                "- **No real anomaly labels.** Accuracy comes from injected, synthetic anomalies; real ones may differ.\n"
+                "- **59 households, not 60** as the proposal says (the dataset page lists 59). Coverage differs by home and some have gaps.\n"
+                "- **No timezone** in the source. We assume local Pakistan time.\n"
+                "- **Solar and net metering:** two homes report generation and some may use net metering. We use the 'Usage' column as given.\n"
+                "- **Zero readings** may be real outages (load-shedding). We keep them and flag them as 'near zero'.\n"
+                "- **Offline analysis:** each home's normal is learned from the whole recorded period, not in real time.\n"
+                "- **Modest cluster separation** (silhouette about 0.2) and only 59 homes, so results describe this sample, not all of Pakistan.")
+    gap(6)
+    callout(DISCLAIMER, warn=True)
+    footer_nav("About & Limitations")
 
 
 PAGES = {"Home": page_home, "Data Explorer": page_explorer, "Normal Behaviour": page_normal,
          "Anomaly Detector": page_detector, "Household Clusters": page_clusters, "Weather Impact": page_weather,
          "Method Comparison": page_methods, "About & Limitations": page_about}
 
-st.sidebar.title("Navigation")
-choice = st.sidebar.radio("Go to", list(PAGES), label_visibility="collapsed")
-st.sidebar.caption("Colours: blue = normal, orange = flagged.")
+if "nav" not in st.session_state:      # open any page directly with ?page=Anomaly%20Detector
+    st.session_state["nav"] = st.query_params.get("page") if st.query_params.get("page") in PAGES else "Home"
+with st.sidebar:
+    st.markdown('<div class="brand">⚡ Anomaly Mining</div><div class="brand-sub">Pakistan household electricity</div>', unsafe_allow_html=True)
+    choice = st.radio("Go to", list(PAGES), key="nav", label_visibility="collapsed")
+    st.markdown('<hr style="border:none;border-top:1px solid var(--hair);margin:10px 0">'
+                '<div class="side-note"><span class="swatch" style="background:var(--blue)"></span>Normal<br>'
+                '<span class="swatch" style="background:var(--orange)"></span>Flagged as unusual<br><br>'
+                '<b>Theme:</b> use the ⋮ menu (top right) → Settings → Theme to switch between light and dark.</div>',
+                unsafe_allow_html=True)
+st.query_params["page"] = choice
 PAGES[choice]()

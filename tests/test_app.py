@@ -50,8 +50,27 @@ def main():
     at = fresh("Weather Impact")
     at.selectbox[0].select_index(10).run(); check(at, "Weather Impact: household #10")
     at = fresh("Method Comparison")
-    for m in ("Recall", "F1", "AUC"):
+    for m in ("Recall (found)", "F1 (balance)", "AUC (ranking quality)"):
         at.main.radio[0].set_value(m).run(); check(at, f"Method Comparison: metric {m}")
+    # Navigation buttons: the Home call-to-action and the Next / Back footer
+    at = fresh("Home")
+    [b for b in at.button if b.key == "cta_home"][0].click().run()
+    assert at.sidebar.radio[0].value == "Anomaly Detector", "call-to-action did not open the Anomaly Detector"
+    check(at, "Home: call-to-action opens Anomaly Detector")
+    [b for b in at.button if b.key.startswith("next_")][0].click().run()
+    assert at.sidebar.radio[0].value == "Household Clusters", "Next button did not advance"
+    check(at, "Footer: Next opens Household Clusters")
+    [b for b in at.button if b.key.startswith("back_")][0].click().run()
+    assert at.sidebar.radio[0].value == "Anomaly Detector", "Back button did not go back"
+    check(at, "Footer: Back returns to Anomaly Detector")
+
+    # Deep link: ?page=Weather Impact opens that page directly
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=120)
+    at.query_params["page"] = "Weather Impact"
+    at.run()
+    assert at.sidebar.radio[0].value == "Weather Impact", "?page= deep link did not open the page"
+    check(at, "Deep link: ?page=Weather Impact")
+
     print("\nAll app checks passed.")
 
 

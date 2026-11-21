@@ -21,8 +21,8 @@ PEAK_HOURS = [21, 22, 23, 0, 1]
 Z_THRESHOLD = 3.5
 
 # Colours used in every chart and the app (colour-blind safe blue vs orange)
-COLOR_NORMAL = "#1f6f8b"
-COLOR_ANOMALY = "#e8710a"
+COLOR_NORMAL = "#2a78d6"
+COLOR_ANOMALY = "#eb6834"
 
 
 def ensure_dirs():
