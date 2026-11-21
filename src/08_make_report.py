@@ -16,7 +16,7 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle)
+from reportlab.platypus import (Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle)
 
 from utils import APP_DATA, DOCS, PROCESSED, COLOR_ANOMALY, COLOR_NORMAL, ensure_dirs
 
@@ -151,7 +151,6 @@ def footer(canvas, doc):
 def build():
     ensure_dirs()
     cl = pd.read_csv(PROCESSED / "cleaning_log.csv")
-    inv = pd.read_csv(PROCESSED / "data_inventory.csv")
     real = pd.read_parquet(APP_DATA / "anomalies.parquet", columns=["household_id", "city", "flag_if", "flag_lof", "flag_z", "flag_iqr", "consensus", "reason", "timestamp"])
     day = pd.read_parquet(APP_DATA / "daily_anomalies.parquet")
     comp = pd.read_csv(APP_DATA / "method_comparison.csv")
@@ -172,11 +171,8 @@ def build():
     n_h, n_city = real.household_id.nunique(), real.city.nunique()
     raw_rows, hours = int(cl.raw_rows.sum()), len(real)
     n_if, n_c2 = int(real.flag_if.sum()), int((real.consensus >= 2).sum())
-    best_auc = comp.loc[comp.auc.idxmax()]
     cons = comp[comp.method.str.startswith("Consensus")].iloc[0]
-    iforest = comp[comp.method == "Isolation Forest"].iloc[0]
     lof = comp[comp.method == "Local Outlier Factor"].iloc[0]
-    zs = comp[comp.method.str.startswith("Z-score")].iloc[0]
     wc_t = wc[wc.measure.str.contains("time-only")].iloc[0]
     wc_w = wc[wc.measure.str.contains("weather-aware")].iloc[0]
     ifw = wc[wc.measure == "Isolation Forest flag"].iloc[0]
@@ -278,7 +274,7 @@ def build():
           img(tmp / "inj.png", 13), P("Figure 3. AUC by injected anomaly type.", SMALL)]
     ev = inj[inj.type.isin(["shift_event", "flatline_event"])].pivot(index="method", columns="type", values="recall")
     s += bullets([
-        f"<b>Spikes</b> are found very well by Isolation Forest and the per-home Z-score (AUC close to 1.0).",
+        "<b>Spikes</b> are found very well by Isolation Forest and the per-home Z-score (AUC close to 1.0).",
         f"<b>Flat lines</b> are found mainly by LOF ({ev.loc['Local Outlier Factor', 'flatline_event']:.0%} of the blocks had at least one hour flagged). Isolation Forest does not see them.",
         f"<b>Level shifts</b> of 2.5 times for 6 hours are hard at 1% flags; LOF ranks them best (AUC {inj[(inj.method == 'Local Outlier Factor') & (inj.type == 'shift')].auc.iloc[0]:.2f}).",
         f"<b>Naive global threshold</b> (all homes together) is the weakest (F1 {comp[comp.method.str.startswith('Global')].f1.iloc[0]:.2f}), which proves that per-home normal matters.",

@@ -12,8 +12,6 @@ contamination = the share of points we EXPECT to be anomalous. We use 1%
 An anomaly flag only means "differs from the learned normal pattern". It is not
 proof of theft, faults or any specific cause.
 """
-import importlib
-
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
