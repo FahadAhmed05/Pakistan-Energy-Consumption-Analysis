@@ -11,12 +11,12 @@ from pathlib import Path
 
 SRC = Path(__file__).parent / "src"
 STEPS = ["01_load_and_clean.py", "02_integrate_weather.py", "03_features.py", "04_baseline_profiles.py",
-         "04b_eda_data.py", "05_anomaly_detection.py", "06_clustering.py", "07_evaluation.py"]
+         "04b_eda_data.py", "05_anomaly_detection.py", "06_clustering.py", "07_evaluation.py", "08_make_report.py"]
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--from", dest="start", type=int, default=1, help="first step number to run (1-7)")
+    ap.add_argument("--from", dest="start", type=int, default=1, help="first step number to run (1-8)")
     start = ap.parse_args().start
     for i, step in enumerate(STEPS, start=1):
         if int(step[:2]) < start:
