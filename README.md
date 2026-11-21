@@ -59,6 +59,19 @@ The repository already contains the precomputed results, so this works right aft
 streamlit run app.py
 ```
 
+`streamlit run` only previews the app on your own computer. To put it online, deploy it from GitHub
+(see "Deploy on Streamlit Community Cloud" below).
+
+**Light and dark theme.** Both themes are defined in `.streamlit/config.toml`. The app follows your system setting,
+and you can switch in Streamlit's top-right menu (⋮ → Settings → Theme). Charts and cards recolour to match.
+
+**Open a page directly** with `?page=`, for example `http://localhost:8501/?page=Anomaly%20Detector`.
+Useful for presenting: every page also has Back / Next buttons in story order.
+
+**Design notes.** One validated colour pair (blue = normal, orange = flagged) in both themes, insight titles instead of
+generic chart titles, a table view behind every chart, and a compact layout (4px grid, 14px base text).
+The colours were checked with a colour-blind-safety validator; clusters also use different marker shapes.
+
 ## Rebuild everything from the raw data
 
 1. Download these three files from the dataset page above into `data/raw/`:

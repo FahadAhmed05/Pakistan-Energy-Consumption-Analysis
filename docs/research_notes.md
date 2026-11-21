@@ -35,3 +35,17 @@ What we found by opening the real files:
 Common unsupervised smart-meter approaches are statistical thresholds (z-score, IQR), Isolation Forest, LOF,
 and clustering of load profiles. Robust statistics (median/MAD) are preferred over mean/std because
 outliers inflate the std. We follow these ideas; we do not cite specific papers.
+
+## 4. UI/UX research (app redesign)
+Sources actually opened or searched (summaries read; several pages refused automated access, so they are not relied on):
+- Toptal, UXPilot and the Streamlit dashboard docs were read: lead with 3 to 5 headline KPIs, summary then trends then detail,
+  progressive disclosure, one global filter row, the "hover test" (a chart must make sense without hovering), do not rely on
+  red/green alone, plain-language empty states.
+- Search results on compact density (Material, Cloudscape, Microsoft, Atlassian spacing pages): a 4px base grid, 8px compact
+  component padding, 12 to 16px card padding, 12 to 14px text; Material warns that density hurts accessibility if pushed too far,
+  so controls stay at least about 32px tall and horizontal margins stay generous.
+- The dataviz palette validator checked every colour set (normal/flagged pair and the cluster trio, light and dark).
+
+Decisions: compact layout with graphs left at full size; blue/orange pair; insight titles; table view under charts;
+Back / Next footer for story-order presenting; `?page=` deep links; native Streamlit light and dark themes
+(Streamlit exposes no CSS variables, so a custom toggle could not restyle its own widgets and dataframes).
