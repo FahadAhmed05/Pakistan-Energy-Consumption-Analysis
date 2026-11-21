@@ -13,8 +13,9 @@ DOCS = ROOT / "docs"
 
 RANDOM_STATE = 42
 
-# Peak hours (evening): chosen from the EDA in step 4, see docs/research_notes.md
-PEAK_HOURS = list(range(18, 23))
+# Peak hours: the 5 hours with the highest average load across all homes (EDA, step 4).
+# Late evening / night, most likely cooling and evening activity.
+PEAK_HOURS = [21, 22, 23, 0, 1]
 
 # Robust z-scores beyond this are called unusual (common cut-off for modified z-scores)
 Z_THRESHOLD = 3.5
