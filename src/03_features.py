@@ -3,7 +3,8 @@
 Why: models need numbers that describe "normal behaviour": when it is (hour, day,
 month), what happened just before (lags, rolling stats) and the weather.
 
-No data leakage: rolling and lag features only use PAST hours (shift before rolling).
+flat_run counts how many hours in a row the value did not change at all (a frozen meter
+or a long outage looks like this). No data leakage: rolling and lag features only use PAST hours (shift before rolling).
 We rebuild a complete hourly grid per household first, so "lag 1" really means the
 previous hour; where an hour is missing the lag is left empty (NaN).
 """
@@ -36,6 +37,8 @@ def add_history_features(df):
         feats["diff_1"] = grid["kwh"] - feats["lag_1"]
         feats["roll24_mean"] = past.rolling(24, min_periods=12).mean()
         feats["roll24_std"] = past.rolling(24, min_periods=12).std()
+        same = grid["kwh"].eq(grid["kwh"].shift(1))             # exactly the same value as the hour before
+        feats["flat_run"] = same.groupby((~same).cumsum()).cumsum().clip(upper=24)   # hours "stuck" so far
         g = full.join(feats, how="left").reset_index()
         out.append(g)
     return pd.concat(out, ignore_index=True)
@@ -47,6 +50,7 @@ def main():
     df = add_history_features(df)
     for c in ["lag_1", "lag_24", "diff_1", "roll24_mean", "roll24_std"]:
         df[c] = df[c].astype("float32")
+    df["flat_run"] = df["flat_run"].fillna(0).astype("int8")
     df = df.sort_values(["household_id", "timestamp"]).reset_index(drop=True)
     print(f"Rows: {len(df):,}  columns: {len(df.columns)}")
     print("Missing share per feature (first hours / gaps are expected):")

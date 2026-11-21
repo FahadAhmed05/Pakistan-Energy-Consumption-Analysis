@@ -1,0 +1,17 @@
+method_a,method_b,jaccard
+flag_if,flag_if,1.0
+flag_if,flag_lof,0.04
+flag_if,flag_z,0.344
+flag_if,flag_iqr,0.152
+flag_lof,flag_if,0.04
+flag_lof,flag_lof,1.0
+flag_lof,flag_z,0.034
+flag_lof,flag_iqr,0.024
+flag_z,flag_if,0.344
+flag_z,flag_lof,0.034
+flag_z,flag_z,1.0
+flag_z,flag_iqr,0.267
+flag_iqr,flag_if,0.152
+flag_iqr,flag_lof,0.024
+flag_iqr,flag_z,0.267
+flag_iqr,flag_iqr,1.0

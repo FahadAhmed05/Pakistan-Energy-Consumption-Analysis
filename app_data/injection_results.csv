@@ -1,0 +1,43 @@
+method,type,precision,recall,f1,auc,n_injected
+Isolation Forest,all,0.535,0.196,0.287,0.788,828.0
+Isolation Forest,spike,0.453,0.808,0.581,0.998,144.0
+Isolation Forest,drop,0.002,0.003,0.003,0.844,108.0
+Isolation Forest,shift,0.236,0.152,0.185,0.746,288.0
+Isolation Forest,flatline,0.012,0.006,0.008,0.704,288.0
+Isolation Forest,shift_event,,0.417,,,48.0
+Isolation Forest,flatline_event,,0.014,,,48.0
+Local Outlier Factor,all,0.292,0.302,0.297,0.848,828.0
+Local Outlier Factor,spike,0.088,0.41,0.145,0.879,144.0
+Local Outlier Factor,drop,0.04,0.235,0.068,0.914,108.0
+Local Outlier Factor,shift,0.05,0.112,0.07,0.796,288.0
+Local Outlier Factor,flatline,0.18,0.464,0.26,0.859,288.0
+Local Outlier Factor,shift_event,,0.333,,,48.0
+Local Outlier Factor,flatline_event,,0.868,,,48.0
+Z-score (per home & hour),all,0.946,0.222,0.36,0.686,828.0
+Z-score (per home & hour),spike,0.923,0.859,0.889,0.998,144.0
+Z-score (per home & hour),drop,0.0,0.0,0.0,0.88,108.0
+Z-score (per home & hour),shift,0.843,0.205,0.328,0.644,288.0
+Z-score (per home & hour),flatline,0.111,0.005,0.009,0.5,288.0
+Z-score (per home & hour),shift_event,,0.424,,,48.0
+Z-score (per home & hour),flatline_event,,0.014,,,48.0
+IQR (per home & hour),all,0.061,0.278,0.1,0.678,828.0
+IQR (per home & hour),spike,0.036,0.919,0.069,0.98,144.0
+IQR (per home & hour),drop,0.0,0.015,0.001,0.834,108.0
+IQR (per home & hour),shift,0.024,0.299,0.044,0.647,288.0
+IQR (per home & hour),flatline,0.003,0.036,0.005,0.499,288.0
+IQR (per home & hour),shift_event,,0.542,,,48.0
+IQR (per home & hour),flatline_event,,0.083,,,48.0
+Global z-score (naive),all,0.06,0.135,0.083,0.644,828.0
+Global z-score (naive),spike,0.037,0.472,0.069,0.836,144.0
+Global z-score (naive),drop,0.0,0.0,0.0,0.853,108.0
+Global z-score (naive),shift,0.023,0.146,0.04,0.611,288.0
+Global z-score (naive),flatline,0.001,0.007,0.002,0.503,288.0
+Global z-score (naive),shift_event,,0.292,,,48.0
+Global z-score (naive),flatline_event,,0.007,,,48.0
+Consensus (2+ methods),all,0.91,0.241,0.381,0.731,828.0
+Consensus (2+ methods),spike,0.87,0.91,0.889,0.983,144.0
+Consensus (2+ methods),drop,0.0,0.0,0.0,0.604,108.0
+Consensus (2+ methods),shift,0.754,0.226,0.346,0.657,288.0
+Consensus (2+ methods),flatline,0.157,0.013,0.024,0.725,288.0
+Consensus (2+ methods),shift_event,,0.458,,,48.0
+Consensus (2+ methods),flatline_event,,0.042,,,48.0

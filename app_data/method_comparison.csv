@@ -1,0 +1,7 @@
+method,flag_rate_pct,precision,recall,f1,auc
+Isolation Forest,1.01,0.535,0.196,0.287,0.788
+Local Outlier Factor,1.01,0.292,0.302,0.297,0.848
+Z-score (per home & hour),1.39,0.946,0.222,0.36,0.686
+IQR (per home & hour),5.13,0.061,0.278,0.1,0.678
+Global z-score (naive),2.2,0.06,0.135,0.083,0.644
+Consensus (2+ methods),1.65,0.91,0.241,0.381,0.731

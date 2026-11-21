@@ -25,7 +25,7 @@ from utils import PROCESSED, APP_DATA, RANDOM_STATE, Z_THRESHOLD, ensure_dirs
 CONTAMINATION = 0.01
 SENSITIVITY = [0.005, 0.01, 0.02]
 LOF_NEIGHBORS = 35
-MODEL_FEATURES = ["kwh_s", "robust_z", "weather_z", "diff_s", "hour_sin", "hour_cos", "is_weekend", "temp_z"]
+MODEL_FEATURES = ["kwh_s", "robust_z", "weather_z", "diff_s", "hour_sin", "hour_cos", "is_weekend", "temp_z", "flat_run"]
 METHODS = ["if", "lof", "z", "iqr"]          # the four methods that vote in the consensus
 
 
@@ -39,6 +39,7 @@ def build_model_inputs(g):
     x["hour_sin"] = np.sin(2 * np.pi * g["hour"] / 24)
     x["hour_cos"] = np.cos(2 * np.pi * g["hour"] / 24)
     x["is_weekend"] = g["is_weekend"]
+    x["flat_run"] = g["flat_run"].clip(0, 12)
     x["temp_z"] = (g["temp_c"] - g["temp_c"].mean()) / (g["temp_c"].std() + 1e-6)
     x = x[MODEL_FEATURES].astype("float64")
     assert np.isfinite(x.to_numpy()).all()
@@ -71,7 +72,10 @@ def statistical_flags(df):
     q1, q3 = grp.transform(lambda s: s.quantile(0.25)), grp.transform(lambda s: s.quantile(0.75))
     iqr = q3 - q1
     z_global = (df["kwh"] - df["kwh"].mean()) / df["kwh"].std()
-    return (z.abs() > 3), ((df["kwh"] < q1 - 1.5 * iqr) | (df["kwh"] > q3 + 1.5 * iqr)), (z_global.abs() > 3)
+    flags = (z.abs() > 3), ((df["kwh"] < q1 - 1.5 * iqr) | (df["kwh"] > q3 + 1.5 * iqr)), (z_global.abs() > 3)
+    # continuous scores (higher = more unusual); used for the threshold-free AUC in step 7 of the evaluation
+    outside = np.maximum(q1 - df["kwh"], df["kwh"] - q3) / (iqr + 1e-6)
+    return flags + (z.abs(), outside, z_global.abs())
 
 
 def reason_tags(df):
@@ -103,7 +107,8 @@ def detect(df, contamination=CONTAMINATION):
     df["lof_score"] = lof_score.astype("float32")
     df["flag_if"] = df.groupby("household_id")["if_score"].transform(lambda s: top_share_flag(s, contamination))
     df["flag_lof"] = df.groupby("household_id")["lof_score"].transform(lambda s: top_share_flag(s, contamination))
-    df["flag_z"], df["flag_iqr"], df["flag_global"] = statistical_flags(df)
+    (df["flag_z"], df["flag_iqr"], df["flag_global"],
+     df["z_score"], df["iqr_score"], df["global_score"]) = statistical_flags(df)
     df["consensus"] = df[["flag_if", "flag_lof", "flag_z", "flag_iqr"]].sum(axis=1).astype("int8")
     any_flag = df["consensus"] > 0
     df["reason"] = "Normal"
