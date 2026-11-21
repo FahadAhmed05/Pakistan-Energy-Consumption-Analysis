@@ -1,0 +1,4 @@
+cluster_name,households,mean_kwh,peak_to_avg,evening_share,night_share,temp_corr,multi_method_rate_pct
+Group 1: high evening use & low night use,10,0.368,1.677,0.325,0.196,0.213,2.388
+Group 2: low evening use & high afternoon use,14,0.805,1.581,0.209,0.236,0.23,1.625
+Group 3: high temperature sensitivity & high night use,35,0.78,1.361,0.275,0.271,0.451,1.491
