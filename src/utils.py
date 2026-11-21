@@ -16,6 +16,9 @@ RANDOM_STATE = 42
 # Peak hours (evening): chosen from the EDA in step 4, see docs/research_notes.md
 PEAK_HOURS = list(range(18, 23))
 
+# Robust z-scores beyond this are called unusual (common cut-off for modified z-scores)
+Z_THRESHOLD = 3.5
+
 # Colours used in every chart and the app (colour-blind safe blue vs orange)
 COLOR_NORMAL = "#1f6f8b"
 COLOR_ANOMALY = "#e8710a"
