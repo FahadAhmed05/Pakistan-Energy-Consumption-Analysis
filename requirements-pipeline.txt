@@ -1,0 +1,6 @@
+# Everything needed to rebuild the data, models and report:  pip install -r requirements-pipeline.txt
+-r requirements.txt
+scikit-learn==1.9.1
+openpyxl==3.1.5
+matplotlib==3.11.2
+reportlab==5.1.0
