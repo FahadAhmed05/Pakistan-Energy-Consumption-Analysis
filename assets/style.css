@@ -1,11 +1,21 @@
-/* Compact density on a 4px grid. Colours come from CSS variables (light defaults here,
-   app.py injects the dark values when the Streamlit theme is dark). Charts keep their size. */
+/* Compact density on a 4px grid.
+   Colours use light-dark(): Streamlit sets color-scheme on .stApp to match the ACTIVE theme (system setting
+   or the menu choice), so everything below recolours itself in the browser with no theme detection in Python. */
 :root {
-  --page: #f9f9f7;  --surface: #fcfcfb;
-  --ink: #0b0b0b;  --ink2: #52514e;  --muted: #898781;
-  --hair: rgba(11, 11, 11, 0.10);  --grid: #e1e0d9;  --hover: #f1f0ec;
-  --blue: #2a78d6;  --blue-dark: #1c5cab;  --blue-wash: #eaf2fc;
-  --orange: #eb6834;  --orange-wash: #fdeee7;  --hot-text: #b8431a;
+  --surface: light-dark(#fcfcfb, #1a1a19);
+  --ink: light-dark(#0b0b0b, #f0efec);
+  --ink2: light-dark(#52514e, #c3c2b7);
+  --muted: #898781;
+  --hair: light-dark(rgba(11, 11, 11, 0.10), rgba(255, 255, 255, 0.10));
+  --grid: light-dark(#e1e0d9, #2c2c2a);
+  --baseline: light-dark(#c3c2b7, #383835);
+  --hover: light-dark(#f1f0ec, #262624);
+  --blue: light-dark(#2a78d6, #3987e5);
+  --blue-dark: light-dark(#1c5cab, #86b6ef);
+  --blue-wash: light-dark(#eaf2fc, rgba(57, 135, 229, 0.16));
+  --orange: light-dark(#eb6834, #d95926);
+  --orange-wash: light-dark(#fdeee7, rgba(217, 89, 38, 0.18));
+  --hot-text: light-dark(#b8431a, #f2a283);
   --radius: 10px;
 }
 html { font-size: 14px; }
@@ -15,10 +25,10 @@ html, body, .stApp, [data-testid="stAppViewContainer"] {
 /* keep Streamlit's theme menu (top right) but drop the Deploy button and footer */
 footer, [data-testid="stDecoration"], [data-testid="stAppDeployButton"], .stDeployButton { display: none !important; }
 header[data-testid="stHeader"] { background: transparent; height: 2.4rem; }
-.block-container { max-width: 1360px; padding: 0.6rem 2rem 2.5rem 2rem; }
+.block-container { max-width: 1360px; padding: 2.6rem 2rem 2.5rem 2rem; }
 [data-testid="stVerticalBlock"] { gap: 0.55rem; }
 [data-testid="stHorizontalBlock"] { gap: 0.75rem; }
-@media (max-width: 700px) { .block-container { padding: 0.5rem 0.9rem 2rem 0.9rem; } }
+@media (max-width: 700px) { .block-container { padding: 2.6rem 0.9rem 2rem 0.9rem; } }
 
 /* page header */
 .eyebrow { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--blue-dark); margin-bottom: 2px; }
@@ -32,7 +42,7 @@ header[data-testid="stHeader"] { background: transparent; height: 2.4rem; }
 }
 .insight { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.3; margin: 0 0 1px 0; color: var(--ink); }
 .insight-sub { font-size: 12.5px; color: var(--ink2); margin: 0 0 4px 0; line-height: 1.4; }
-.how { font-size: 12.5px; color: var(--ink2); margin-top: 2px; }
+.how { font-size: 12.5px; color: var(--ink2); margin: 2px 0 6px 0; }
 
 /* KPI tiles */
 .kpi { background: var(--surface); border: 1px solid var(--hair); border-radius: var(--radius); padding: 9px 14px; height: 100%; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
@@ -54,20 +64,47 @@ header[data-testid="stHeader"] { background: transparent; height: 2.4rem; }
 .fig { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; color: var(--blue-dark); line-height: 1.2; }
 .fig-label { font-size: 12.5px; color: var(--ink2); line-height: 1.4; }
 .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--blue-wash); color: var(--blue-dark); margin-bottom: 4px; }
+.where { font-size: 13px; line-height: 1.45; margin: 4px 0; color: var(--ink); }
+.where b { color: var(--blue-dark); }
 
-/* sidebar: brand + pill navigation */
+/* charts: text, grid and marker rings follow the active theme (Plotly draws SVG, so CSS can restyle it) */
+.stPlotlyChart .xtick text, .stPlotlyChart .ytick text, .stPlotlyChart text.xtitle, .stPlotlyChart text.ytitle,
+.stPlotlyChart .legendtext, .stPlotlyChart .g-xtitle text, .stPlotlyChart .g-ytitle text { fill: var(--ink2) !important; }
+.stPlotlyChart .gridlayer path { stroke: var(--grid) !important; }
+.stPlotlyChart .xlines-below, .stPlotlyChart .ylines-below, .stPlotlyChart .xlines-above, .stPlotlyChart .ylines-above { stroke: var(--baseline) !important; }
+.stPlotlyChart .xaxislayer-above path, .stPlotlyChart .yaxislayer-above path { stroke: var(--baseline) !important; }
+.stPlotlyChart .scatterlayer .points path { stroke: var(--surface) !important; }
+
+/* sidebar: brand, numbered navigation with icons, progress */
 [data-testid="stSidebar"] { border-right: 1px solid var(--hair); }
-[data-testid="stSidebarContent"] { padding-top: 0.6rem; }
-.brand { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; margin-bottom: 0; color: var(--ink); }
-.brand-sub { font-size: 12px; color: var(--ink2); margin-bottom: 8px; }
-.side-note { font-size: 12px; color: var(--ink2); line-height: 1.5; }
+[data-testid="stSidebar"][aria-expanded="true"] { min-width: 15.5rem; max-width: 15.5rem; }
+[data-testid="stSidebarContent"] { padding-top: 0.8rem; }
+[data-testid="stSidebarContent"] [data-testid="stVerticalBlock"] { gap: 0.4rem; }
+.brand-row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; }
+.logo { width: 32px; height: 32px; border-radius: 9px; background: linear-gradient(135deg, #3482e0, #e2602e); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 17px; flex: 0 0 32px; }
+.brand { font-weight: 700; font-size: 14.5px; letter-spacing: -0.01em; line-height: 1.15; color: var(--ink); }
+.brand-sub { font-size: 11.5px; color: var(--ink2); line-height: 1.2; }
+.side-label { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); margin: 10px 0 8px 4px; opacity: .85; }
+.side-note { font-size: 11.5px; color: var(--ink2); line-height: 1.5; }
+.side-chip { display: inline-flex; align-items: center; font-size: 11.5px; padding: 2px 9px; border: 1px solid var(--hair); border-radius: 999px; margin: 0 4px 4px 0; color: var(--ink2); background: var(--surface); }
+.prog { height: 4px; border-radius: 999px; background: var(--hair); overflow: hidden; margin: 4px 0 2px 0; }
+.prog > span { display: block; height: 100%; background: var(--blue); border-radius: 999px; }
 [data-testid="stSidebar"] [role="radiogroup"] { gap: 1px; }
-[data-testid="stSidebar"] [role="radiogroup"] label { padding: 5px 10px; border-radius: 6px; width: 100%; cursor: pointer; }
-[data-testid="stSidebar"] [role="radiogroup"] label > div:first-child { display: none; }
-[data-testid="stSidebar"] [role="radiogroup"] label:hover { background: var(--hover); }
-[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) { background: var(--blue-wash); }
-[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p { color: var(--blue-dark); font-weight: 650; }
-[data-testid="stSidebar"] [role="radiogroup"] p { font-size: 13.5px; }
+[data-testid="stSidebar"] [data-testid="stRadioOption"] { padding: 6px 10px; border-radius: 7px; width: 100%; cursor: pointer; }
+[data-testid="stSidebar"] [data-testid="stRadioOption"] > div > div:first-child { display: none; }   /* hide the round radio dot */
+[data-testid="stSidebar"] [data-testid="stRadioOption"]:hover { background: var(--hover); }
+[data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input:checked) { background: var(--blue-wash); box-shadow: inset 3px 0 0 var(--blue); }
+[data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input:checked) p { color: var(--blue-dark); font-weight: 650; }
+[data-testid="stSidebar"] [data-testid="stRadioOption"] p { font-size: 13.5px; }
+[data-testid="stSidebar"] [data-testid="stRadioOption"] p::before { display: inline-block; width: 1.6em; }
+[data-testid="stSidebar"] [role="radiogroup"] > *:nth-child(1) p::before { content: "🏠"; }
+[data-testid="stSidebar"] [role="radiogroup"] > *:nth-child(2) p::before { content: "🔎"; }
+[data-testid="stSidebar"] [role="radiogroup"] > *:nth-child(3) p::before { content: "📈"; }
+[data-testid="stSidebar"] [role="radiogroup"] > *:nth-child(4) p::before { content: "🚨"; }
+[data-testid="stSidebar"] [role="radiogroup"] > *:nth-child(5) p::before { content: "🧩"; }
+[data-testid="stSidebar"] [role="radiogroup"] > *:nth-child(6) p::before { content: "🌡️"; }
+[data-testid="stSidebar"] [role="radiogroup"] > *:nth-child(7) p::before { content: "⚖️"; }
+[data-testid="stSidebar"] [role="radiogroup"] > *:nth-child(8) p::before { content: "ℹ️"; }
 
 /* controls */
 button[kind="primary"] { background: var(--blue); border-color: var(--blue); color: #fff; }
@@ -81,9 +118,5 @@ button[kind], [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton
 [data-testid="stCaptionContainer"] { font-size: 12px; }
 
 /* Back / Next footer: Next sits on the right */
-[class*="st-key-next_"] { display: flex; justify-content: flex-end; }
 [class*="st-key-next_"] { display: flex; justify-content: flex-end; width: 100%; }
 [class*="st-key-next_"] .stButton, [class*="st-key-next_"] button { width: auto !important; }
-.how { margin-bottom: 6px; }
-.where { font-size: 13px; line-height: 1.45; margin: 4px 0; color: var(--ink); }
-.where b { color: var(--blue-dark); }

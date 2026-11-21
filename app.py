@@ -18,24 +18,15 @@ import streamlit as st
 ROOT = Path(__file__).parent
 APP_DATA = ROOT / "app_data"
 
-# ---- design tokens (validated with the dataviz palette validator, both themes) ----
-IS_DARK = getattr(st.context.theme, "type", None) == "dark"      # follows the Streamlit theme menu (top right)
-LIGHT = dict(page="#f9f9f7", surface="#fcfcfb", ink="#0b0b0b", ink2="#52514e", muted="#898781", hair="rgba(11,11,11,0.10)",
-             grid="#e1e0d9", baseline="#c3c2b7", hover="#f1f0ec", blue="#2a78d6", orange="#eb6834", blue_dark="#1c5cab",
-             blue_wash="#eaf2fc", orange_wash="#fdeee7", hot_text="#b8431a",
-             clusters=["#2a78d6", "#e87ba4", "#008300"],            # blue, magenta, green (orange is reserved for flags)
-             seq=[[0, "#cde2fb"], [0.35, "#86b6ef"], [0.65, "#3987e5"], [0.85, "#1c5cab"], [1, "#0d366b"]])
-DARK = dict(page="#0d0d0d", surface="#1a1a19", ink="#f0efec", ink2="#c3c2b7", muted="#898781", hair="rgba(255,255,255,0.10)",
-            grid="#2c2c2a", baseline="#383835", hover="#262624", blue="#3987e5", orange="#d95926", blue_dark="#86b6ef",
-            blue_wash="rgba(57,135,229,0.16)", orange_wash="rgba(217,89,38,0.18)", hot_text="#f2a283",
-            clusters=["#3987e5", "#d55181", "#0ca30c"],
-            seq=[[0, "#0d2a4f"], [0.5, "#1c5cab"], [1, "#3987e5"]])      # low values recede into the dark surface; white text stays readable
-TH = DARK if IS_DARK else LIGHT
-NORMAL, ANOMALY = TH["blue"], TH["orange"]
-INK, INK2, MUTED = TH["ink"], TH["ink2"], TH["muted"]
-GRID, BASELINE, SURFACE = TH["grid"], TH["baseline"], TH["surface"]
-CLUSTER_COLORS, SEQUENTIAL = TH["clusters"], TH["seq"]
+# ---- design tokens ----
+# Data colours are mid-tones validated on BOTH the light (#fcfcfb) and dark (#1a1a19) surface.
+# Text, grid lines and marker rings are recoloured per theme by assets/style.css (CSS light-dark()).
+NORMAL, ANOMALY = "#3482e0", "#e2602e"                 # blue = normal, orange = flagged
+INK, INK2, MUTED = "#0b0b0b", "#7a7a75", "#898781"
+GRID, BASELINE, SURFACE = "rgba(128,128,128,0.25)", "rgba(128,128,128,0.45)", "rgba(128,128,128,0.5)"
+CLUSTER_COLORS = ["#3482e0", "#d8628c", "#0b8a0b"]       # blue, magenta, green (orange is reserved for flags)
 CLUSTER_SYMBOLS = ["circle", "diamond", "square"]
+SEQUENTIAL = [[0, "#cde2fb"], [0.35, "#86b6ef"], [0.65, "#3987e5"], [0.85, "#1c5cab"], [1, "#0d366b"]]
 FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
 PLOT_CONFIG = {"displayModeBar": False}
 
@@ -50,12 +41,8 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 SHORT = {"Isolation Forest": "Isolation Forest", "Local Outlier Factor": "LOF", "Z-score (per home & hour)": "Z-score",
          "IQR (per home & hour)": "IQR", "Global z-score (naive)": "Global z-score", "Consensus (2+ methods)": "2+ agree"}
 
-st.set_page_config(page_title="Pakistan Electricity Anomaly Mining", page_icon="⚡", layout="wide")
-_vars = {"page": TH["page"], "surface": TH["surface"], "ink": TH["ink"], "ink2": TH["ink2"], "muted": TH["muted"], "hair": TH["hair"],
-         "hover": TH["hover"], "blue": TH["blue"], "blue-dark": TH["blue_dark"], "blue-wash": TH["blue_wash"], "orange": TH["orange"],
-         "orange-wash": TH["orange_wash"], "hot-text": TH["hot_text"], "grid": TH["grid"]}
-_theme_css = ":root{" + "".join(f"--{k}:{v};" for k, v in _vars.items()) + "}"
-st.markdown(f"<style>{(ROOT / 'assets' / 'style.css').read_text(encoding='utf-8')}{_theme_css}</style>", unsafe_allow_html=True)
+st.set_page_config(page_title="Pakistan Electricity Anomaly Mining", page_icon="⚡", layout="wide", initial_sidebar_state="expanded")
+st.markdown(f"<style>{(ROOT / 'assets' / 'style.css').read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 _card_ids = itertools.count()          # restarts every run, so card keys stay stable
 
 
@@ -110,12 +97,27 @@ def gap(px_height=12):
 def style(fig, ytitle=None, xtitle=None, height=360, hover="x"):
     """One chart look everywhere: hairline solid grid, recessive axes, 2px lines, legend top-left."""
     fig.update_layout(
-        height=height, margin=dict(l=4, r=8, t=28, b=8), template="plotly_dark" if IS_DARK else "plotly_white", font=dict(family=FONT, size=13, color=INK2),
+        height=height, margin=dict(l=4, r=8, t=28, b=8), template="plotly_white", font=dict(family=FONT, size=13, color=INK2),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode=hover, hoverdistance=30,
-        hoverlabel=dict(bgcolor=SURFACE, bordercolor=GRID, font=dict(family=FONT, size=13, color=INK)),
+        hoverlabel=dict(bgcolor="#ffffff", bordercolor="#c3c2b7", font=dict(family=FONT, size=13, color="#0b0b0b")),
         legend=dict(orientation="h", x=0, y=1.14, xanchor="left", font=dict(size=13)),
         xaxis=dict(title=xtitle, showgrid=False, linecolor=BASELINE, ticks="outside", tickcolor=BASELINE, title_font=dict(size=13)),
         yaxis=dict(title=ytitle, gridcolor=GRID, gridwidth=1, zeroline=False, title_font=dict(size=13)))
+    return fig
+
+
+def heatmap(d):
+    """Scorecard heatmap: light-to-dark blue cells, white text on dark cells and near-black on light ones."""
+    z = d.to_numpy(dtype=float)
+    fig = go.Figure(go.Heatmap(z=z, x=list(d.columns), y=list(d.index), colorscale=SEQUENTIAL, zmin=0, zmax=1, showscale=False,
+                               xgap=2, ygap=2, hovertemplate="%{y} · %{x}: %{z:.2f}<extra></extra>"))
+    for i, row in enumerate(z):
+        for j, v in enumerate(row):
+            if v == v:      # skip NaN
+                fig.add_annotation(x=d.columns[j], y=d.index[i], text=f"{v:.2f}", showarrow=False,
+                                   font=dict(size=13, color="#ffffff" if v >= 0.6 else "#0b0b0b"))
+    fig.update_xaxes(side="top", showgrid=False)
+    fig.update_yaxes(autorange="reversed", showgrid=False)
     return fig
 
 
@@ -567,15 +569,13 @@ def page_methods():
     order = ["spike", "drop", "shift", "flatline", "all"]
     d = inj[inj.type.isin(order)].pivot(index="method", columns="type", values=metric)[order]
     d = d.reindex(list(SHORT)).rename(index=SHORT, columns={"all": "Overall", "spike": "Spike", "drop": "Drop to zero", "shift": "6-hour shift", "flatline": "Flat line"})
-    fig = px.imshow(d, text_auto=".2f", color_continuous_scale=SEQUENTIAL, zmin=0, zmax=1, aspect="auto")
-    fig.update_traces(xgap=2, ygap=2, hovertemplate="%{y} on %{x}: %{z:.2f}<extra></extra>")
+    fig = heatmap(d)
     style(fig, None, None, 330, hover="closest")
-    fig.update_xaxes(side="top", showgrid=False, tickfont=dict(size=13))
-    fig.update_yaxes(showgrid=False, tickfont=dict(size=13))
-    fig.update_layout(coloraxis_showscale=False)
+    fig.update_xaxes(tickfont=dict(size=13))
+    fig.update_yaxes(tickfont=dict(size=13))
     gap(10)
     chart_card("Scorecard: how well each method finds each kind of injected anomaly",
-               f"{'Brighter' if IS_DARK else 'Darker'} blue is better. Spike = one very high hour; Drop = sudden zero; 6-hour shift = use ×2.5; Flat line = value stuck for 6 hours.",
+               "Darker blue is better. Spike = one very high hour; Drop = sudden zero; 6-hour shift = use ×2.5; Flat line = value stuck for 6 hours.",
                fig, how="read across a row to see a method's strengths. No row is strong everywhere, which is why we combine methods.",
                table=d.pipe(rnd, 3).reset_index().rename(columns={"method": "Method"}))
     gap(12)
@@ -585,9 +585,8 @@ def page_methods():
         nm = {"flag_if": "Isolation Forest", "flag_lof": "LOF", "flag_z": "Z-score", "flag_iqr": "IQR"}
         pv = agr.pivot(index="method_a", columns="method_b", values="jaccard").rename(index=nm, columns=nm)
         pv = pv.loc[list(nm.values()), list(nm.values())]
-        fig = px.imshow(pv, text_auto=".2f", color_continuous_scale=SEQUENTIAL, zmin=0, zmax=1, aspect="auto")
-        fig.update_traces(xgap=2, ygap=2, hovertemplate="%{y} vs %{x}: %{z:.2f}<extra></extra>")
-        style(fig, None, None, 330, hover="closest").update_layout(coloraxis_showscale=False)
+        fig = heatmap(pv)
+        style(fig, None, None, 330, hover="closest")
         chart_card("The methods catch different things", "Overlap of flagged hours (1.0 = identical, 0 = none).",
                    fig, how="low numbers off the diagonal mean the methods disagree, so combining them adds information.", table=pv.pipe(rnd, 3).reset_index())
     with cc[1]:
@@ -648,12 +647,19 @@ PAGES = {"Home": page_home, "Data Explorer": page_explorer, "Normal Behaviour": 
 if "nav" not in st.session_state:      # open any page directly with ?page=Anomaly%20Detector
     st.session_state["nav"] = st.query_params.get("page") if st.query_params.get("page") in PAGES else "Home"
 with st.sidebar:
-    st.markdown('<div class="brand">⚡ Anomaly Mining</div><div class="brand-sub">Pakistan household electricity</div>', unsafe_allow_html=True)
+    st.markdown('<div class="brand-row"><div class="logo">⚡</div><div><div class="brand">Anomaly Mining</div>'
+                '<div class="brand-sub">Pakistan household electricity</div></div></div>'
+                '<div class="side-label">The story</div>', unsafe_allow_html=True)
     choice = st.radio("Go to", list(PAGES), key="nav", label_visibility="collapsed")
-    st.markdown('<hr style="border:none;border-top:1px solid var(--hair);margin:10px 0">'
-                '<div class="side-note"><span class="swatch" style="background:var(--blue)"></span>Normal<br>'
-                '<span class="swatch" style="background:var(--orange)"></span>Flagged as unusual<br><br>'
-                '<b>Theme:</b> use the ⋮ menu (top right) → Settings → Theme to switch between light and dark.</div>',
-                unsafe_allow_html=True)
+    step, n_steps = list(PAGES).index(choice), len(PAGES) - 1          # Home is the start, the other 7 pages are steps 1 to 7
+    st.markdown(f'<div class="side-label">Progress · {"start" if step == 0 else f"step {step} of {n_steps}"}</div>'
+                f'<div class="prog"><span style="width:{100 * step / n_steps:.0f}%"></span></div>'
+                '<div class="side-label" style="margin-top:12px">Key</div>'
+                '<span class="side-chip"><span class="swatch" style="background:var(--blue)"></span>Normal</span>'
+                '<span class="side-chip"><span class="swatch" style="background:var(--orange)"></span>Flagged</span>'
+                '<div class="side-label" style="margin-top:12px">Data</div>'
+                '<span class="side-chip">REWD-P · LUMS</span><span class="side-chip">59 homes · 6 cities</span>'
+                '<div class="side-note" style="margin-top:12px"><b>Theme:</b> ⋮ menu (top right) → Settings → Theme '
+                'for light or dark.</div>', unsafe_allow_html=True)
 st.query_params["page"] = choice
 PAGES[choice]()
